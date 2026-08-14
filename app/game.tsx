@@ -11,6 +11,7 @@ const BASE_X = 500;
 const BASE_Y = 590;
 const PIXELS_PER_METER = 5;
 const RECOVERY_Y = BASE_Y + 94;
+const MAX_CAMERA_LIFT = 148;
 
 type Shape = "box" | "circle";
 type ItemRole = "foundation" | "bridge" | "block" | "tall" | "risky";
@@ -289,6 +290,7 @@ class TowerPhysicsGame {
   private lastUiUpdate = 0;
   private activationAt = 0;
   private frameId = 0;
+  private cameraOffsetY = 0;
   private baseBody: Matter.Body | null = null;
   private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "robot", HTMLImageElement>;
 
@@ -421,6 +423,7 @@ class TowerPhysicsGame {
     this.hintIndex = 0;
     this.hintsLeft = 3;
     this.activeHint = null;
+    this.cameraOffsetY = 0;
     this.message = "已重置本关。物料和 3 次提示已恢复。";
     Composite.clear(this.engine.world, false, true);
     Engine.clear(this.engine);
@@ -694,7 +697,7 @@ class TowerPhysicsGame {
     const rect = this.canvas.getBoundingClientRect();
     return {
       x: ((clientX - rect.left) / Math.max(1, rect.width)) * WORLD_WIDTH,
-      y: ((clientY - rect.top) / Math.max(1, rect.height)) * WORLD_HEIGHT,
+      y: ((clientY - rect.top) / Math.max(1, rect.height)) * WORLD_HEIGHT - this.cameraOffsetY,
     };
   }
 
@@ -733,12 +736,24 @@ class TowerPhysicsGame {
     this.context.setTransform(1, 0, 0, 1, 0, 0);
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.context.setTransform(dpr * scaleX, 0, 0, dpr * scaleY, 0, 0);
+    this.updateCamera();
 
     const activating = this.status === "activating" || this.status === "cleared";
     const illuminate = activating ? clamp((this.elapsed - this.activationAt - 1000) / 2200, 0, 1) : 0;
     const pullProgress = activating ? clamp((this.elapsed - this.activationAt - 300) / 850, 0, 1) : 0;
+    this.context.save();
+    this.context.translate(0, this.cameraOffsetY);
     this.drawScene(illuminate, pullProgress, now);
     this.drawWorld(illuminate, pullProgress);
+    this.context.restore();
+  }
+
+  private updateCamera() {
+    // Higher towers pull the view upward, while leaving enough of the ground visible to keep placement readable.
+    const targetLift = clamp((Math.max(0, this.height) - 8) * 1.55, 0, MAX_CAMERA_LIFT);
+    const easing = targetLift > this.cameraOffsetY ? 0.075 : 0.12;
+    this.cameraOffsetY += (targetLift - this.cameraOffsetY) * easing;
+    if (Math.abs(targetLift - this.cameraOffsetY) < 0.05) this.cameraOffsetY = targetLift;
   }
 
   private imageReady(image: HTMLImageElement) {
@@ -761,12 +776,14 @@ class TowerPhysicsGame {
     const ctx = this.context;
     const polluted = this.artwork.polluted;
     const revived = this.artwork.revived;
+    const backdropTop = -MAX_CAMERA_LIFT;
+    const backdropHeight = WORLD_HEIGHT + MAX_CAMERA_LIFT;
 
     ctx.fillStyle = "#101b1d";
-    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    ctx.fillRect(0, backdropTop, WORLD_WIDTH, backdropHeight);
     if (this.imageReady(polluted)) {
       ctx.globalAlpha = 0.96;
-      ctx.drawImage(polluted, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+      ctx.drawImage(polluted, 0, backdropTop, WORLD_WIDTH, backdropHeight);
       ctx.globalAlpha = 1;
     } else {
       this.drawFallbackSky(illuminate);
@@ -774,12 +791,12 @@ class TowerPhysicsGame {
     if (illuminate > 0 && this.imageReady(revived)) {
       ctx.save();
       ctx.globalAlpha = illuminate;
-      ctx.drawImage(revived, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+      ctx.drawImage(revived, 0, backdropTop, WORLD_WIDTH, backdropHeight);
       ctx.restore();
     }
 
     ctx.fillStyle = `rgba(5, 13, 15, ${0.22 - illuminate * 0.14})`;
-    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    ctx.fillRect(0, backdropTop, WORLD_WIDTH, backdropHeight);
 
     const rig = this.getLightRig();
     if (illuminate > 0) {
@@ -787,7 +804,7 @@ class TowerPhysicsGame {
       glow.addColorStop(0, `rgba(255, 242, 169, ${0.55 * illuminate})`);
       glow.addColorStop(1, "rgba(255, 242, 169, 0)");
       ctx.fillStyle = glow;
-      ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+      ctx.fillRect(0, backdropTop, WORLD_WIDTH, backdropHeight);
     }
 
     this.drawGrowth(illuminate, now);
@@ -821,12 +838,12 @@ class TowerPhysicsGame {
 
   private drawFallbackSky(illuminate: number) {
     const ctx = this.context;
-    const sky = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
+    const sky = ctx.createLinearGradient(0, -MAX_CAMERA_LIFT, 0, WORLD_HEIGHT);
     sky.addColorStop(0, colorMix([26, 46, 49], [99, 177, 195], illuminate));
     sky.addColorStop(0.62, colorMix([47, 63, 60], [201, 227, 192], illuminate));
     sky.addColorStop(1, colorMix([67, 71, 63], [111, 166, 97], illuminate));
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    ctx.fillRect(0, -MAX_CAMERA_LIFT, WORLD_WIDTH, WORLD_HEIGHT + MAX_CAMERA_LIFT);
   }
 
   private drawGrowth(illuminate: number, now: number) {
@@ -918,7 +935,7 @@ class TowerPhysicsGame {
 
     if (this.status === "activating" || this.status === "cleared") {
       ctx.fillStyle = `rgba(255, 240, 166, ${0.12 + illuminate * 0.18})`;
-      ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+      ctx.fillRect(0, -MAX_CAMERA_LIFT, WORLD_WIDTH, WORLD_HEIGHT + MAX_CAMERA_LIFT);
     }
   }
 
