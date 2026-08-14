@@ -1,7 +1,7 @@
 "use client";
 
 import Matter from "matter-js";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 const { Bodies, Body, Composite, Engine, World } = Matter;
 
@@ -34,7 +34,23 @@ type ItemId =
   | "bicycle"
   | "chair";
 
-type GameStatus = "building" | "cleared" | "failed";
+type GameStatus = "building" | "activating" | "cleared" | "failed";
+
+interface ArtSprite {
+  asset: "junk-sprite-atlas.png" | "risky-props.png";
+  column: number;
+  row: number;
+  columns: number;
+  rows: number;
+}
+
+interface LightRig {
+  x: number;
+  goalY: number;
+  lampY: number;
+  ropeStartY: number;
+  ropeEndY: number;
+}
 
 interface ItemDefinition {
   id: ItemId;
@@ -96,7 +112,29 @@ interface GameSnapshot {
   hint: HintSpec | null;
   message: string;
   wind: number;
+  activationProgress: number;
 }
+
+const ITEM_ART: Record<ItemId, ArtSprite> = {
+  pallet: { asset: "junk-sprite-atlas.png", column: 0, row: 0, columns: 4, rows: 4 },
+  slab: { asset: "junk-sprite-atlas.png", column: 1, row: 0, columns: 4, rows: 4 },
+  container: { asset: "junk-sprite-atlas.png", column: 2, row: 0, columns: 4, rows: 4 },
+  car: { asset: "junk-sprite-atlas.png", column: 3, row: 0, columns: 4, rows: 4 },
+  cabinet: { asset: "junk-sprite-atlas.png", column: 0, row: 1, columns: 4, rows: 4 },
+  sofa: { asset: "junk-sprite-atlas.png", column: 1, row: 1, columns: 4, rows: 4 },
+  beam: { asset: "junk-sprite-atlas.png", column: 2, row: 1, columns: 4, rows: 4 },
+  ladder: { asset: "junk-sprite-atlas.png", column: 3, row: 1, columns: 4, rows: 4 },
+  pipes: { asset: "junk-sprite-atlas.png", column: 0, row: 2, columns: 4, rows: 4 },
+  crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4 },
+  fridge: { asset: "junk-sprite-atlas.png", column: 2, row: 2, columns: 4, rows: 4 },
+  washer: { asset: "junk-sprite-atlas.png", column: 3, row: 2, columns: 4, rows: 4 },
+  computer: { asset: "junk-sprite-atlas.png", column: 0, row: 3, columns: 4, rows: 4 },
+  scaffold: { asset: "junk-sprite-atlas.png", column: 1, row: 3, columns: 4, rows: 4 },
+  barrel: { asset: "junk-sprite-atlas.png", column: 2, row: 3, columns: 4, rows: 4 },
+  tire: { asset: "junk-sprite-atlas.png", column: 3, row: 3, columns: 4, rows: 4 },
+  bicycle: { asset: "risky-props.png", column: 0, row: 0, columns: 2, rows: 1 },
+  chair: { asset: "risky-props.png", column: 1, row: 0, columns: 2, rows: 1 },
+};
 
 const ITEMS: Record<ItemId, ItemDefinition> = {
   pallet: {
@@ -214,6 +252,7 @@ function initialSnapshot(level: LevelConfig): GameSnapshot {
     hint: null,
     message: "按住右侧物料拖入场景；松手后它会遵循物理规律落下。",
     wind: level.wind,
+    activationProgress: 0,
   };
 }
 
@@ -240,9 +279,10 @@ class TowerPhysicsGame {
   private lastFrame = 0;
   private accumulator = 0;
   private lastUiUpdate = 0;
-  private clearAt = 0;
+  private activationAt = 0;
   private frameId = 0;
   private baseBody: Matter.Body | null = null;
+  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "robot", HTMLImageElement>;
 
   constructor(canvas: HTMLCanvasElement, level: LevelConfig, onUpdate: (snapshot: GameSnapshot) => void, onClear: () => void) {
     const context = canvas.getContext("2d");
@@ -254,12 +294,27 @@ class TowerPhysicsGame {
     this.onClear = onClear;
     this.inventory = inventoryFor(level);
     this.engine = this.createEngine();
+    this.artwork = {
+      polluted: this.loadArtwork("/assets/wasteland-polluted.png"),
+      revived: this.loadArtwork("/assets/wasteland-revived.png"),
+      junk: this.loadArtwork("/assets/junk-sprite-atlas.png"),
+      risky: this.loadArtwork("/assets/risky-props.png"),
+      robot: this.loadArtwork("/assets/lumina-r07-pull.png"),
+    };
     this.createWorld();
+  }
+
+  private loadArtwork(source: string) {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = source;
+    return image;
   }
 
   start() {
     window.addEventListener("pointermove", this.onPointerMove, { passive: false });
     window.addEventListener("pointerup", this.onPointerUp, { passive: false });
+    window.addEventListener("pointercancel", this.onPointerCancel, { passive: false });
     window.addEventListener("keydown", this.onKeyDown);
     this.emit(true);
     this.frameId = window.requestAnimationFrame(this.tick);
@@ -269,6 +324,7 @@ class TowerPhysicsGame {
     window.cancelAnimationFrame(this.frameId);
     window.removeEventListener("pointermove", this.onPointerMove);
     window.removeEventListener("pointerup", this.onPointerUp);
+    window.removeEventListener("pointercancel", this.onPointerCancel);
     window.removeEventListener("keydown", this.onKeyDown);
     Composite.clear(this.engine.world, false, true);
     Engine.clear(this.engine);
@@ -297,6 +353,13 @@ class TowerPhysicsGame {
     this.emit(true);
   }
 
+  cancelHeld() {
+    if (!this.held || this.status !== "building") return;
+    this.held = null;
+    this.message = "已放回当前物料，不会消耗数量。";
+    this.emit(true);
+  }
+
   useHint() {
     if (this.status !== "building" || this.hintsLeft <= 0) return;
     const hints = hintsFor(this.level);
@@ -316,6 +379,7 @@ class TowerPhysicsGame {
     this.stableHeight = 0;
     this.stableElapsed = 0;
     this.collapseElapsed = 0;
+    this.activationAt = 0;
     this.hintIndex = 0;
     this.hintsLeft = 3;
     this.activeHint = null;
@@ -377,6 +441,12 @@ class TowerPhysicsGame {
     }
   };
 
+  private readonly onPointerCancel = (event: PointerEvent) => {
+    if (!this.held || this.held.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    this.cancelHeld();
+  };
+
   private readonly onKeyDown = (event: KeyboardEvent) => {
     if (event.key.toLowerCase() === "q") {
       event.preventDefault();
@@ -387,9 +457,7 @@ class TowerPhysicsGame {
       this.rotateHeld(1);
     }
     if (event.key === "Escape" && this.held) {
-      this.held = null;
-      this.message = "已放回当前物料，不会消耗数量。";
-      this.emit(true);
+      this.cancelHeld();
     }
   };
 
@@ -431,12 +499,17 @@ class TowerPhysicsGame {
     const delta = this.lastFrame ? Math.min(33, now - this.lastFrame) : 16.667;
     this.lastFrame = now;
     this.elapsed += delta;
-    this.accumulator += delta;
-    while (this.accumulator >= 16.667) {
-      Engine.update(this.engine, 16.667);
-      this.accumulator -= 16.667;
+    if (this.status === "building") {
+      this.accumulator += delta;
+      while (this.accumulator >= 16.667) {
+        Engine.update(this.engine, 16.667);
+        this.accumulator -= 16.667;
+      }
+    } else {
+      this.accumulator = 0;
     }
     this.updateSimulation(delta);
+    if (this.status === "activating" && this.elapsed - this.activationAt >= 4100) this.finishClear();
     this.render(now);
     if (now - this.lastUiUpdate > 110) {
       this.emit();
@@ -447,6 +520,7 @@ class TowerPhysicsGame {
 
   private updateSimulation(delta: number) {
     if (this.status !== "building") return;
+    this.recoverMisplacedBodies();
     const towerBodies = this.towerBodies();
     if (this.level.wind > 0 && towerBodies.length > 0) {
       const phase = Math.sin(this.elapsed / 850) + Math.sin(this.elapsed / 1600) * 0.55;
@@ -458,7 +532,6 @@ class TowerPhysicsGame {
       });
     }
 
-    this.recoverMisplacedBodies();
     const currentHeight = this.measureHeight();
     this.height = currentHeight;
     const stable = towerBodies.length > 0 && towerBodies.every((body) => body.speed < 0.33 && Math.abs(body.angularVelocity) < 0.035);
@@ -479,7 +552,13 @@ class TowerPhysicsGame {
       this.collapseElapsed = 0;
     }
 
-    if (currentHeight >= this.level.target && stable && this.stableElapsed > 1250) this.clear();
+    const rig = this.getLightRig();
+    const reachesRope = towerBodies.some((body) =>
+      body.bounds.min.y <= rig.ropeEndY + 10
+      && body.bounds.max.x >= rig.x - 30
+      && body.bounds.min.x <= rig.x + 30,
+    );
+    if (currentHeight >= this.level.target && reachesRope && stable && this.stableElapsed > 1250) this.activateLight();
   }
 
   private recoverMisplacedBodies() {
@@ -512,11 +591,18 @@ class TowerPhysicsGame {
     return Math.max(0, (BASE_Y - top) / PIXELS_PER_METER);
   }
 
-  private clear() {
+  private activateLight() {
     if (this.status !== "building") return;
+    this.status = "activating";
+    this.activationAt = this.elapsed;
+    this.message = "塔身稳定。拾光者 R-07 已抵达绳端，正在启动人工太阳。";
+    this.emit(true);
+  }
+
+  private finishClear() {
+    if (this.status !== "activating") return;
     this.status = "cleared";
-    this.clearAt = this.elapsed;
-    this.message = this.level.id === 10 ? "最后的光源已启动，世界重新拥有黎明。" : "塔身稳定！拾光者正在拉下点亮世界的绳索。";
+    this.message = this.level.id === 10 ? "人工太阳稳定运行，最后一片废土迎来了黎明。" : "光源已点亮。土地正在恢复生机。";
     this.onClear();
     this.emit(true);
   }
@@ -536,6 +622,11 @@ class TowerPhysicsGame {
     };
   }
 
+  private activationProgress() {
+    if (this.status === "building" || this.status === "failed") return 0;
+    return clamp((this.elapsed - this.activationAt) / 4100, 0, 1);
+  }
+
   private emit(force = false) {
     if (!force && this.status === "building" && this.lastUiUpdate === 0) return;
     this.onUpdate({
@@ -548,6 +639,7 @@ class TowerPhysicsGame {
       hint: this.activeHint,
       message: this.message,
       wind: this.level.wind,
+      activationProgress: this.activationProgress(),
     });
   }
 
@@ -566,81 +658,82 @@ class TowerPhysicsGame {
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.context.setTransform(dpr * scaleX, 0, 0, dpr * scaleY, 0, 0);
 
-    const illuminate = this.status === "cleared" ? clamp((this.elapsed - this.clearAt) / 3600, 0, 1) : 0;
-    this.drawScene(illuminate, now);
-    this.drawWorld(illuminate);
+    const activating = this.status === "activating" || this.status === "cleared";
+    const illuminate = activating ? clamp((this.elapsed - this.activationAt - 1000) / 2200, 0, 1) : 0;
+    const pullProgress = activating ? clamp((this.elapsed - this.activationAt - 300) / 850, 0, 1) : 0;
+    this.drawScene(illuminate, pullProgress, now);
+    this.drawWorld(illuminate, pullProgress);
   }
 
-  private drawScene(illuminate: number, now: number) {
-    const ctx = this.context;
-    const sky = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
-    sky.addColorStop(0, colorMix([26, 46, 49], [99, 177, 195], illuminate));
-    sky.addColorStop(0.62, colorMix([47, 63, 60], [201, 227, 192], illuminate));
-    sky.addColorStop(1, colorMix([67, 71, 63], [111, 166, 97], illuminate));
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  private imageReady(image: HTMLImageElement) {
+    return image.complete && image.naturalWidth > 0;
+  }
 
-    ctx.fillStyle = `rgba(22, 31, 31, ${0.56 - illuminate * 0.35})`;
-    for (let index = 0; index < 13; index += 1) {
-      const x = index * 88 - 20;
-      const h = 48 + ((index * 37) % 92);
-      ctx.fillRect(x, BASE_Y - 48 - h, 58, h);
-      ctx.fillStyle = `rgba(117, 145, 125, ${0.18 + illuminate * 0.32})`;
-      ctx.fillRect(x + 9, BASE_Y - 40 - h, 10, 5);
-      ctx.fillStyle = `rgba(22, 31, 31, ${0.56 - illuminate * 0.35})`;
+  private getLightRig(): LightRig {
+    const goalY = BASE_Y - this.level.target * PIXELS_PER_METER;
+    const lampY = clamp(goalY - 61, 48, BASE_Y - 61);
+    return {
+      x: BASE_X + this.level.targetOffset,
+      goalY,
+      lampY,
+      ropeStartY: lampY + 20,
+      ropeEndY: goalY - 3,
+    };
+  }
+
+  private drawScene(illuminate: number, pullProgress: number, now: number) {
+    const ctx = this.context;
+    const polluted = this.artwork.polluted;
+    const revived = this.artwork.revived;
+
+    ctx.fillStyle = "#101b1d";
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    if (this.imageReady(polluted)) {
+      ctx.globalAlpha = 0.96;
+      ctx.drawImage(polluted, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+      ctx.globalAlpha = 1;
+    } else {
+      this.drawFallbackSky(illuminate);
+    }
+    if (illuminate > 0 && this.imageReady(revived)) {
+      ctx.save();
+      ctx.globalAlpha = illuminate;
+      ctx.drawImage(revived, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+      ctx.restore();
     }
 
-    const lightX = BASE_X + this.level.targetOffset;
-    const goalY = BASE_Y - this.level.target * PIXELS_PER_METER;
+    ctx.fillStyle = `rgba(5, 13, 15, ${0.22 - illuminate * 0.14})`;
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+    const rig = this.getLightRig();
     if (illuminate > 0) {
-      const glow = ctx.createRadialGradient(lightX, 72, 5, lightX, 72, 330);
+      const glow = ctx.createRadialGradient(rig.x, rig.lampY, 6, rig.x, rig.lampY, 360);
       glow.addColorStop(0, `rgba(255, 242, 169, ${0.55 * illuminate})`);
       glow.addColorStop(1, "rgba(255, 242, 169, 0)");
       ctx.fillStyle = glow;
       ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-      ctx.fillStyle = `rgba(111, 181, 83, ${0.58 * illuminate})`;
-      ctx.fillRect(0, RECOVERY_Y, WORLD_WIDTH, WORLD_HEIGHT - RECOVERY_Y);
-      ctx.strokeStyle = `rgba(52, 120, 60, ${0.75 * illuminate})`;
-      ctx.lineWidth = 2;
-      for (let x = 18; x < WORLD_WIDTH; x += 23) {
-        const wiggle = Math.sin((x + now / 11) / 28) * 4;
-        ctx.beginPath();
-        ctx.moveTo(x, RECOVERY_Y + 12);
-        ctx.lineTo(x + wiggle, RECOVERY_Y + 3);
-        ctx.stroke();
-      }
     }
 
-    ctx.fillStyle = "rgba(21, 29, 30, 0.86)";
+    this.drawGrowth(illuminate, now);
+    ctx.fillStyle = "rgba(11, 17, 18, 0.78)";
     ctx.fillRect(0, RECOVERY_Y + 15, WORLD_WIDTH, WORLD_HEIGHT - RECOVERY_Y);
-    ctx.fillStyle = colorMix([113, 88, 69], [116, 158, 79], illuminate);
+    ctx.fillStyle = colorMix([70, 65, 52], [88, 126, 65], illuminate);
     ctx.fillRect(0, RECOVERY_Y - 2, WORLD_WIDTH, 18);
 
-    ctx.strokeStyle = "rgba(227, 204, 145, 0.92)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(lightX, 82);
-    ctx.lineTo(lightX, goalY + 12);
-    ctx.stroke();
-    ctx.fillStyle = colorMix([50, 54, 54], [255, 218, 112], illuminate);
-    ctx.beginPath();
-    ctx.arc(lightX, 70, 16 + illuminate * 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255, 242, 180, 0.75)";
-    ctx.stroke();
+    this.drawLightRig(rig, illuminate, pullProgress);
 
     ctx.save();
     ctx.setLineDash([7, 8]);
-    ctx.strokeStyle = "rgba(255, 217, 122, 0.88)";
+    ctx.strokeStyle = "rgba(255, 217, 122, 0.9)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(46, goalY);
-    ctx.lineTo(WORLD_WIDTH - 46, goalY);
+    ctx.moveTo(rig.x - 112, rig.goalY);
+    ctx.lineTo(rig.x + 112, rig.goalY);
     ctx.stroke();
     ctx.restore();
     ctx.fillStyle = "#ffe49b";
-    ctx.font = "700 14px Microsoft YaHei";
-    ctx.fillText(`目标 ${this.level.target}m`, 58, goalY - 10);
+    ctx.font = "700 13px Microsoft YaHei";
+    ctx.fillText(`拉绳目标 ${this.level.target}m`, clamp(rig.x - 104, 18, WORLD_WIDTH - 180), rig.goalY - 12);
 
     if (this.level.wind > 0) {
       const windShift = Math.sin(this.elapsed / 850);
@@ -648,14 +741,91 @@ class TowerPhysicsGame {
       ctx.font = "12px Microsoft YaHei";
       ctx.fillText(`${windShift > 0 ? "→" : "←"} 顶部侧风`, WORLD_WIDTH - 138, 49);
     }
-
-    this.drawRobot(lightX - 34, Math.max(101, goalY - 49), illuminate);
   }
 
-  private drawWorld(illuminate: number) {
+  private drawFallbackSky(illuminate: number) {
+    const ctx = this.context;
+    const sky = ctx.createLinearGradient(0, 0, 0, WORLD_HEIGHT);
+    sky.addColorStop(0, colorMix([26, 46, 49], [99, 177, 195], illuminate));
+    sky.addColorStop(0.62, colorMix([47, 63, 60], [201, 227, 192], illuminate));
+    sky.addColorStop(1, colorMix([67, 71, 63], [111, 166, 97], illuminate));
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+  }
+
+  private drawGrowth(illuminate: number, now: number) {
+    if (illuminate <= 0.03) return;
+    const ctx = this.context;
+    ctx.save();
+    ctx.globalAlpha = Math.min(0.78, illuminate * 0.92);
+    ctx.strokeStyle = "#79b55c";
+    ctx.lineWidth = 2;
+    for (let x = 18; x < WORLD_WIDTH; x += 27) {
+      const progress = clamp((illuminate - ((x % 95) / 1600)) * 1.4, 0, 1);
+      if (progress <= 0) continue;
+      const baseY = RECOVERY_Y + 10;
+      const stem = 5 + progress * 11;
+      const sway = Math.sin((x + now / 12) / 31) * 3;
+      ctx.beginPath();
+      ctx.moveTo(x, baseY);
+      ctx.quadraticCurveTo(x + sway, baseY - stem * 0.55, x + sway * 0.75, baseY - stem);
+      ctx.stroke();
+      ctx.strokeStyle = "#a6d879";
+      ctx.beginPath();
+      ctx.moveTo(x + sway * 0.5, baseY - stem * 0.55);
+      ctx.lineTo(x + sway + 4, baseY - stem * 0.7);
+      ctx.stroke();
+      ctx.strokeStyle = "#79b55c";
+    }
+    ctx.restore();
+  }
+
+  private drawLightRig(rig: LightRig, illuminate: number, pullProgress: number) {
+    const ctx = this.context;
+    const ropeEndY = rig.ropeEndY + pullProgress * 9;
+    ctx.save();
+    ctx.strokeStyle = "rgba(32, 43, 44, 0.84)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(rig.x, Math.max(14, rig.lampY - 35));
+    ctx.lineTo(rig.x, rig.lampY - 20);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(229, 209, 151, 0.92)";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(rig.x, rig.ropeStartY);
+    ctx.quadraticCurveTo(rig.x - pullProgress * 6, (rig.ropeStartY + ropeEndY) / 2, rig.x, ropeEndY);
+    ctx.stroke();
+    ctx.fillStyle = "#e7c879";
+    ctx.beginPath();
+    ctx.arc(rig.x, ropeEndY, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    const coreRadius = 17 + illuminate * 5;
+    ctx.fillStyle = colorMix([48, 55, 54], [255, 214, 102], illuminate);
+    ctx.beginPath();
+    ctx.arc(rig.x, rig.lampY, coreRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(245, 229, 179, 0.86)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(65, 69, 60, 0.9)";
+    ctx.lineWidth = 3;
+    for (let index = 0; index < 8; index += 1) {
+      const angle = (Math.PI * 2 * index) / 8;
+      ctx.beginPath();
+      ctx.moveTo(rig.x + Math.cos(angle) * (coreRadius + 3), rig.lampY + Math.sin(angle) * (coreRadius + 3));
+      ctx.lineTo(rig.x + Math.cos(angle) * (coreRadius + 10), rig.lampY + Math.sin(angle) * (coreRadius + 10));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private drawWorld(illuminate: number, pullProgress: number) {
     const ctx = this.context;
     const baseWidth = this.level.baseWidth;
-    ctx.fillStyle = "#46575a";
+    ctx.fillStyle = colorMix([54, 69, 71], [89, 110, 76], illuminate);
     roundedRect(ctx, BASE_X - baseWidth / 2, BASE_Y - 3, baseWidth, 20, 6);
     ctx.fill();
     ctx.fillStyle = "rgba(187, 209, 196, 0.38)";
@@ -670,7 +840,9 @@ class TowerPhysicsGame {
     if (this.activeHint) this.drawHint(this.activeHint);
     if (this.held) this.drawGhost(this.held);
 
-    if (this.status === "cleared") {
+    if (this.status === "activating" || this.status === "cleared") this.drawRobot(this.getLightRig(), illuminate, pullProgress);
+
+    if (this.status === "activating" || this.status === "cleared") {
       ctx.fillStyle = `rgba(255, 240, 166, ${0.12 + illuminate * 0.18})`;
       ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     }
@@ -683,7 +855,8 @@ class TowerPhysicsGame {
     ctx.save();
     ctx.translate(body.position.x, body.position.y);
     ctx.rotate(body.angle);
-    if (item.shape === "circle") {
+    const drewArtwork = this.drawItemArtwork(item);
+    if (!drewArtwork && item.shape === "circle") {
       ctx.fillStyle = item.color;
       ctx.beginPath();
       ctx.arc(0, 0, item.width / 2, 0, Math.PI * 2);
@@ -693,7 +866,7 @@ class TowerPhysicsGame {
       ctx.beginPath();
       ctx.arc(0, 0, item.width * 0.22, 0, Math.PI * 2);
       ctx.stroke();
-    } else {
+    } else if (!drewArtwork) {
       ctx.fillStyle = item.color;
       roundedRect(ctx, -item.width / 2, -item.height / 2, item.width, item.height, Math.min(8, item.height / 3));
       ctx.fill();
@@ -706,7 +879,7 @@ class TowerPhysicsGame {
       ctx.fillRect(-item.width / 2 + 7, -item.height / 2 + 6, Math.max(8, item.width - 14), Math.min(6, item.height / 5));
       ctx.globalAlpha = 1;
     }
-    if (item.width >= 45 && item.height >= 25) {
+    if (!drewArtwork && item.width >= 45 && item.height >= 25) {
       ctx.fillStyle = "rgba(246, 243, 219, 0.9)";
       ctx.font = `700 ${Math.min(16, Math.max(10, item.height * 0.34))}px Microsoft YaHei`;
       ctx.textAlign = "center";
@@ -714,6 +887,32 @@ class TowerPhysicsGame {
       ctx.fillText(item.shortName, 0, 1);
     }
     ctx.restore();
+  }
+
+  private drawItemArtwork(item: ItemDefinition, opacity = 1) {
+    const sprite = ITEM_ART[item.id];
+    const image = sprite.asset === "junk-sprite-atlas.png" ? this.artwork.junk : this.artwork.risky;
+    if (!this.imageReady(image)) return false;
+    const sourceWidth = image.naturalWidth / sprite.columns;
+    const sourceHeight = image.naturalHeight / sprite.rows;
+    const visualWidth = item.width * (item.shape === "circle" ? 1.16 : 1.12);
+    const visualHeight = item.height * (item.shape === "circle" ? 1.16 : 1.2);
+    const ctx = this.context;
+    const previousAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = previousAlpha * opacity;
+    ctx.drawImage(
+      image,
+      sprite.column * sourceWidth,
+      sprite.row * sourceHeight,
+      sourceWidth,
+      sourceHeight,
+      -visualWidth / 2,
+      -visualHeight / 2,
+      visualWidth,
+      visualHeight,
+    );
+    ctx.globalAlpha = previousAlpha;
+    return true;
   }
 
   private drawGhost(held: HeldItem) {
@@ -726,6 +925,7 @@ class TowerPhysicsGame {
     ctx.strokeStyle = "#c8f29b";
     ctx.lineWidth = 3;
     ctx.setLineDash([6, 5]);
+    const drewArtwork = this.drawItemArtwork(item, 0.75);
     if (item.shape === "circle") {
       ctx.beginPath();
       ctx.arc(0, 0, item.width / 2, 0, Math.PI * 2);
@@ -733,6 +933,10 @@ class TowerPhysicsGame {
     } else {
       roundedRect(ctx, -item.width / 2, -item.height / 2, item.width, item.height, Math.min(8, item.height / 3));
       ctx.stroke();
+    }
+    if (!drewArtwork) {
+      ctx.fillStyle = "rgba(171, 240, 138, 0.12)";
+      ctx.fill();
     }
     ctx.restore();
   }
@@ -750,14 +954,15 @@ class TowerPhysicsGame {
     ctx.strokeStyle = "#b9f392";
     ctx.setLineDash([5, 4]);
     ctx.lineWidth = 2;
+    const drewArtwork = this.drawItemArtwork(item, 0.38);
     if (item.shape === "circle") {
       ctx.beginPath();
       ctx.arc(0, 0, item.width / 2 + 4, 0, Math.PI * 2);
-      ctx.fill();
+      if (!drewArtwork) ctx.fill();
       ctx.stroke();
     } else {
       roundedRect(ctx, -item.width / 2 - 4, -item.height / 2 - 4, item.width + 8, item.height + 8, 7);
-      ctx.fill();
+      if (!drewArtwork) ctx.fill();
       ctx.stroke();
     }
     ctx.restore();
@@ -766,32 +971,47 @@ class TowerPhysicsGame {
     ctx.fillText("提示落点", x + 10, y - item.height / 2 - 12);
   }
 
-  private drawRobot(x: number, y: number, illuminate: number) {
+  private drawRobot(rig: LightRig, illuminate: number, pullProgress: number) {
     const ctx = this.context;
-    const pulling = this.status === "cleared" ? clamp((this.elapsed - this.clearAt - 450) / 900, 0, 1) : 0;
+    const appearance = clamp((this.elapsed - this.activationAt) / 620, 0, 1);
+    const robot = this.artwork.robot;
+    const robotWidth = 126;
+    const robotHeight = 189;
+    const robotX = rig.x - 145;
+    const robotY = clamp(rig.ropeEndY - 145 + (1 - appearance) * 34, 2, BASE_Y - robotHeight + 22);
+
     ctx.save();
-    ctx.translate(x, y);
-    ctx.fillStyle = "#d8b95d";
-    roundedRect(ctx, 0, 13, 38, 30, 7);
-    ctx.fill();
-    ctx.fillStyle = "#25343b";
-    roundedRect(ctx, 7, 4, 24, 18, 5);
-    ctx.fill();
-    ctx.fillStyle = colorMix([112, 170, 159], [255, 241, 161], illuminate);
-    ctx.beginPath();
-    ctx.arc(19, 13, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#c3a95e";
-    ctx.lineWidth = 5;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(34, 22);
-    ctx.lineTo(44, 12 - pulling * 18);
-    ctx.lineTo(45 + pulling * 3, 3);
-    ctx.stroke();
-    ctx.fillStyle = "#3a4b47";
-    ctx.fillRect(5, 42, 9, 7);
-    ctx.fillRect(24, 42, 9, 7);
+    ctx.globalAlpha = appearance * 0.92;
+    if (this.imageReady(robot)) {
+      ctx.globalCompositeOperation = "screen";
+      ctx.drawImage(robot, robotX, robotY, robotWidth, robotHeight);
+      ctx.globalCompositeOperation = "source-over";
+    } else {
+      ctx.save();
+      ctx.translate(robotX + 65, robotY + 128);
+      ctx.strokeStyle = "#99b79b";
+      ctx.fillStyle = "#e3e4ca";
+      ctx.lineWidth = 7;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(-8, 6);
+      ctx.lineTo(-23, 45);
+      ctx.moveTo(10, 6);
+      ctx.lineTo(22, 45);
+      ctx.moveTo(-3, -13);
+      ctx.lineTo(26, -46 - pullProgress * 18);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(0, -7, 22, 28, -0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = colorMix([97, 214, 205], [255, 226, 130], illuminate);
+      roundedRect(ctx, -17, -35, 34, 15, 7);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.fillStyle = "rgba(233, 248, 213, 0.83)";
+    ctx.font = "700 10px Microsoft YaHei";
+    ctx.fillText("拾光者 R-07", robotX + 6, Math.min(BASE_Y - 16, robotY + robotHeight + 5));
     ctx.restore();
   }
 }
@@ -803,6 +1023,28 @@ function clamp(value: number, min: number, max: number) {
 function colorMix(from: [number, number, number], to: [number, number, number], amount: number) {
   const mix = (index: number) => Math.round(from[index] + (to[index] - from[index]) * amount);
   return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`;
+}
+
+function materialThumbnailStyle(itemId: ItemId): CSSProperties {
+  const sprite = ITEM_ART[itemId];
+  const x = sprite.columns === 1 ? 0 : (sprite.column / (sprite.columns - 1)) * 100;
+  const y = sprite.rows === 1 ? 0 : (sprite.row / (sprite.rows - 1)) * 100;
+  return {
+    backgroundImage: `url(/assets/${sprite.asset})`,
+    backgroundPosition: `${x}% ${y}%`,
+    backgroundRepeat: "no-repeat",
+    backgroundSize: `${sprite.columns * 100}% ${sprite.rows * 100}%`,
+  };
+}
+
+function roleLabel(role: ItemRole) {
+  return {
+    foundation: "地基",
+    bridge: "桥接",
+    block: "填充",
+    tall: "竖向",
+    risky: "高风险",
+  }[role];
 }
 
 function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
@@ -850,19 +1092,37 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
   const currentPercent = clamp(snapshot.height / heightLimit, 0, 1) * 100;
   const targetPercent = clamp(level.target / heightLimit, 0, 1) * 100;
   const isInteractive = snapshot.status === "building";
+  const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
+  const inventoryItems = (Object.keys(ITEMS) as ItemId[]).filter((itemId) => level.inventory.includes(itemId));
+  const stableState = snapshot.height - snapshot.stableHeight > 0.75 ? "正在稳定" : "稳定监测";
+  const rulerFillStyle = {
+    height: `${currentPercent}%`,
+    "--ruler-progress": `${currentPercent}%`,
+  } as CSSProperties;
+  const goalStyle = {
+    bottom: `${targetPercent}%`,
+    "--ruler-point": `${targetPercent}%`,
+  } as CSSProperties;
+  const currentStyle = {
+    bottom: `${currentPercent}%`,
+    "--ruler-point": `${currentPercent}%`,
+  } as CSSProperties;
 
   return (
     <section className="game-layout" aria-label={`第 ${level.id} 关：${level.title}`}>
       <aside className="height-panel panel">
         <div className="panel-kicker">高度仪</div>
         <div className="height-reading"><strong>{snapshot.height.toFixed(1)}</strong><span>m</span></div>
-        <div className="height-sub">稳定记录 {snapshot.stableHeight.toFixed(1)}m</div>
+        <div className="height-sub"><span>稳定记录 {snapshot.stableHeight.toFixed(1)}m</span><b>{stableState}</b></div>
         <div className="ruler-wrap" aria-label={`当前 ${snapshot.height.toFixed(1)} 米，目标 ${level.target} 米`}>
           <div className="ruler-track">
-            <div className="ruler-fill" style={{ height: `${currentPercent}%` }} />
-            <div className="goal-tick" style={{ bottom: `${targetPercent}%` }}><span>{level.target}m</span></div>
-            {Array.from({ length: 6 }, (_, index) => <span className="minor-tick" key={index} style={{ bottom: `${index * 20}%` }} />)}
-            <div className="current-pin" style={{ bottom: `${currentPercent}%` }}><span>{snapshot.height.toFixed(1)}</span></div>
+            <div className="ruler-fill" style={rulerFillStyle} />
+            <div className="goal-tick" style={goalStyle}><span>{level.target}m</span></div>
+            {Array.from({ length: 6 }, (_, index) => {
+              const meters = Math.round((heightLimit * index) / 5);
+              return <span className="minor-tick" key={index} style={{ bottom: `${index * 20}%` }}><i>{meters}m</i></span>;
+            })}
+            <div className="current-pin" style={currentStyle}><span>{snapshot.height.toFixed(1)}</span></div>
           </div>
           <span className="zero-label">0m</span>
         </div>
@@ -880,11 +1140,17 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
             aria-label="垃圾物理堆叠建造区"
             onPointerDown={(event) => {
               event.preventDefault();
+              event.currentTarget.setPointerCapture?.(event.pointerId);
               gameRef.current?.pickOnCanvas(event.clientX, event.clientY, event.pointerId);
             }}
           />
-          <div className="scene-instruction">{snapshot.heldItem ? `正在搬运：${ITEMS[snapshot.heldItem].name}` : "按住右侧物料拖进场景"}</div>
-          {snapshot.status !== "building" && (
+          <div className="scene-instruction">{snapshot.status === "activating" ? "拾光者正在拉下短绳，人工太阳即将点亮" : snapshot.heldItem ? `正在搬运：${ITEMS[snapshot.heldItem].name}` : "选物料后拖至落点；绿色虚线为提示位置"}</div>
+          {snapshot.status === "activating" && (
+            <div className="activation-strip" aria-live="polite">
+              <span>人工太阳启动中</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
+            </div>
+          )}
+          {(snapshot.status === "cleared" || snapshot.status === "failed") && (
             <div className={`result-overlay ${snapshot.status}`}>
               <div className="result-symbol">{snapshot.status === "cleared" ? "✦" : "↯"}</div>
               <strong>{snapshot.status === "cleared" ? (level.id === 10 ? "黎明归来" : "光源已点亮") : "高塔倒塌"}</strong>
@@ -903,33 +1169,41 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
             <button disabled={!snapshot.heldItem || !isInteractive} onClick={() => gameRef.current?.rotateHeld(-1)}>↺ 15°</button>
             <button disabled={!snapshot.heldItem || !isInteractive} onClick={() => gameRef.current?.rotateHeld(1)}>15° ↻</button>
           </div>
+          {snapshot.heldItem && isInteractive && <button className="cancel-button" onClick={() => gameRef.current?.cancelHeld()}>取消选材</button>}
           <button className="restart-button" onClick={() => gameRef.current?.restart()}>重试本关</button>
         </div>
         {snapshot.hint && <div className="hint-copy"><b>明确提示</b>{snapshot.hint.text}</div>}
       </div>
 
       <aside className="inventory-panel panel">
-        <div className="inventory-head"><div><div className="panel-kicker">可用物料</div><strong>{level.inventory.length} 件</strong></div><span>拖拽使用</span></div>
+        <div className="inventory-head"><div><div className="panel-kicker">现实废品库</div><strong>剩余 {availablePieces} / {level.inventory.length}</strong></div><span>拖拽 / 点选</span></div>
         <div className="inventory-list">
-          {Object.entries(snapshot.inventory)
-            .filter(([, count]) => count > 0)
-            .map(([id, count]) => {
-              const item = ITEMS[id as ItemId];
+          {inventoryItems
+            .map((id) => {
+              const item = ITEMS[id];
+              const count = snapshot.inventory[id];
               const highlighted = snapshot.hint?.itemId === item.id;
               return (
                 <button
-                  className={`material-card ${highlighted ? "recommended" : ""}`}
+                  className={`material-card ${highlighted ? "recommended" : ""} ${count === 0 ? "depleted" : ""}`}
                   type="button"
                   key={item.id}
-                  disabled={!isInteractive}
+                  disabled={!isInteractive || count === 0}
                   onPointerDown={(event) => {
                     event.preventDefault();
+                    event.currentTarget.setPointerCapture?.(event.pointerId);
                     gameRef.current?.startHolding(item.id, event.clientX, event.clientY, event.pointerId);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    gameRef.current?.startHolding(item.id, rect.left + rect.width / 2, rect.top + rect.height / 2, -1);
                   }}
                   aria-label={`拖拽 ${item.name}，剩余 ${count} 件`}
                 >
-                  <span className={`material-icon ${item.role}`}>{item.shortName}</span>
-                  <span className="material-copy"><b>{item.name}</b><small>{item.trait}</small></span>
+                  <span className={`material-icon ${item.role}`} style={materialThumbnailStyle(item.id)} aria-hidden="true" />
+                  <span className="material-copy"><b>{item.name}</b><small><em>{roleLabel(item.role)}</em>{item.trait}</small></span>
                   <span className="material-count">×{count}</span>
                 </button>
               );
@@ -947,7 +1221,9 @@ export function DawnTowerGame() {
 
   useEffect(() => {
     const saved = Number(window.localStorage.getItem("dawn-tower-unlocked"));
-    if (Number.isFinite(saved) && saved >= 1 && saved <= 10) setUnlocked(saved);
+    if (!Number.isFinite(saved) || saved < 1 || saved > 10) return;
+    const frame = window.requestAnimationFrame(() => setUnlocked(saved));
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {

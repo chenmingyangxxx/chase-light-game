@@ -2,8 +2,20 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://ashes-to-aurora-game-20260815.sea.chatgpt.site"),
   title: "余烬之光｜物理堆叠小游戏",
-  description: "用废弃物搭出通往光明的路。",
+  description: "在写实废土中堆叠回收物，点亮人工太阳，让土地重新生长。",
+  openGraph: {
+    title: "余烬之光｜物理堆叠小游戏",
+    description: "用废弃物搭出通往光明的路。",
+    images: ["/og.png"],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "余烬之光｜物理堆叠小游戏",
+    description: "用废弃物搭出通往光明的路。",
+    images: ["/og.png"],
+  },
 };
 
 export default function RootLayout({
