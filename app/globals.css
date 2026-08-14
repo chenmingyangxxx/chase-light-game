@@ -423,7 +423,7 @@ body {
 }
 
 .minimal-game .game-layout {
-  grid-template-columns: 112px minmax(0, 1fr) 220px;
+  grid-template-columns: minmax(0, 1fr) 220px;
   height: calc(100dvh - 20px);
   min-height: 610px;
   max-height: 900px;

@@ -45,6 +45,14 @@ interface ArtSprite {
   rows: number;
 }
 
+interface IconSprite {
+  asset: "front-prop-atlas.png" | "front-risky-props.png";
+  column: number;
+  row: number;
+  columns: number;
+  rows: number;
+}
+
 interface LightRig {
   x: number;
   goalY: number;
@@ -142,6 +150,27 @@ const ITEM_ART: Record<ItemId, ArtSprite> = {
   tire: { asset: "junk-sprite-atlas.png", column: 3, row: 3, columns: 4, rows: 4 },
   bicycle: { asset: "risky-props.png", column: 0, row: 0, columns: 2, rows: 1 },
   chair: { asset: "risky-props.png", column: 1, row: 0, columns: 2, rows: 1 },
+};
+
+const ITEM_ICON_ART: Record<ItemId, IconSprite> = {
+  pallet: { asset: "front-prop-atlas.png", column: 0, row: 0, columns: 4, rows: 4 },
+  slab: { asset: "front-prop-atlas.png", column: 1, row: 0, columns: 4, rows: 4 },
+  container: { asset: "front-prop-atlas.png", column: 2, row: 0, columns: 4, rows: 4 },
+  car: { asset: "front-prop-atlas.png", column: 3, row: 0, columns: 4, rows: 4 },
+  cabinet: { asset: "front-prop-atlas.png", column: 0, row: 1, columns: 4, rows: 4 },
+  sofa: { asset: "front-prop-atlas.png", column: 1, row: 1, columns: 4, rows: 4 },
+  beam: { asset: "front-prop-atlas.png", column: 2, row: 1, columns: 4, rows: 4 },
+  ladder: { asset: "front-prop-atlas.png", column: 3, row: 1, columns: 4, rows: 4 },
+  pipes: { asset: "front-prop-atlas.png", column: 0, row: 2, columns: 4, rows: 4 },
+  crate: { asset: "front-prop-atlas.png", column: 1, row: 2, columns: 4, rows: 4 },
+  fridge: { asset: "front-prop-atlas.png", column: 2, row: 2, columns: 4, rows: 4 },
+  washer: { asset: "front-prop-atlas.png", column: 3, row: 2, columns: 4, rows: 4 },
+  computer: { asset: "front-prop-atlas.png", column: 0, row: 3, columns: 4, rows: 4 },
+  scaffold: { asset: "front-prop-atlas.png", column: 1, row: 3, columns: 4, rows: 4 },
+  barrel: { asset: "front-prop-atlas.png", column: 2, row: 3, columns: 4, rows: 4 },
+  tire: { asset: "front-prop-atlas.png", column: 3, row: 3, columns: 4, rows: 4 },
+  bicycle: { asset: "front-risky-props.png", column: 0, row: 0, columns: 2, rows: 1 },
+  chair: { asset: "front-risky-props.png", column: 1, row: 0, columns: 2, rows: 1 },
 };
 
 const ITEMS: Record<ItemId, ItemDefinition> = {
@@ -305,8 +334,8 @@ class TowerPhysicsGame {
     this.inventory = inventoryFor(level);
     this.engine = this.createEngine();
     this.artwork = {
-      polluted: this.loadArtwork("/assets/wasteland-polluted.png"),
-      revived: this.loadArtwork("/assets/wasteland-revived.png"),
+      polluted: this.loadArtwork("/assets/wasteland-flat-polluted.png"),
+      revived: this.loadArtwork("/assets/wasteland-flat-revived.png"),
       junk: this.loadArtwork("/assets/junk-sprite-atlas.png"),
       risky: this.loadArtwork("/assets/risky-props.png"),
       robot: this.loadArtwork("/assets/lumina-r07-compact.png"),
@@ -372,6 +401,10 @@ class TowerPhysicsGame {
       offsetX: point.x - body.position.x,
       offsetY: point.y - body.position.y,
     };
+    // A deliberate reposition starts a new structure; it must never be mistaken for a collapse.
+    this.stableHeight = 0;
+    this.stableElapsed = 0;
+    this.collapseElapsed = 0;
     Body.setStatic(body, true);
     Body.setVelocity(body, { x: 0, y: 0 });
     Body.setAngularVelocity(body, 0);
@@ -543,16 +576,40 @@ class TowerPhysicsGame {
   private placeHeld(x: number, y: number) {
     if (!this.held || this.status !== "building") return;
     const item = ITEMS[this.held.itemId];
-    const snappedX = Math.round(x / 5) * 5;
-    const snappedY = Math.round(y / 5) * 5;
-    const body = this.makeBody(item, snappedX, snappedY, this.held.angle);
+    const placement = this.findSupportedPlacement(item, x, y);
+    if (!placement) {
+      this.message = "物件需要落在地面或已有物件上，不能悬空堆到高处。";
+      this.held = null;
+      this.emit(true);
+      return;
+    }
+    const body = this.makeBody(item, placement.x, placement.y, this.held.angle);
     this.dynamicBodies.push(body);
     World.add(this.engine.world, body);
     this.inventory[item.id] -= 1;
     if (this.activeHint?.itemId === item.id) this.activeHint = null;
-    this.message = `「${item.name}」已释放，等待塔身稳定。`;
+    this.message = `「${item.name}」已接入堆叠，等待结构稳定。`;
     this.held = null;
     this.emit(true);
+  }
+
+  private findSupportedPlacement(item: ItemDefinition, x: number, y: number) {
+    const snappedX = clamp(Math.round(x / 5) * 5, item.width / 2 + 3, WORLD_WIDTH - item.width / 2 - 3);
+    const candidates: Array<{ x: number; y: number; distance: number }> = [];
+    const groundY = BASE_Y - item.height / 2 - 2;
+    candidates.push({ x: snappedX, y: groundY, distance: Math.abs(y - groundY) });
+
+    this.supportGraph().bodies.forEach((support) => {
+      const horizontalOverlap = Math.min(snappedX + item.width / 2, support.bounds.max.x) - Math.max(snappedX - item.width / 2, support.bounds.min.x);
+      const minimumOverlap = Math.max(11, Math.min(item.width, support.bounds.max.x - support.bounds.min.x) * 0.22);
+      if (horizontalOverlap < minimumOverlap) return;
+      const supportY = support.bounds.min.y - item.height / 2 - 2;
+      candidates.push({ x: snappedX, y: supportY, distance: Math.abs(y - supportY) });
+    });
+
+    const closest = candidates.sort((a, b) => a.distance - b.distance)[0];
+    if (!closest || closest.distance > 115) return null;
+    return { x: closest.x, y: Math.round(closest.y / 5) * 5 };
   }
 
   private makeBody(item: ItemDefinition, x: number, y: number, angle: number): TaggedBody {
@@ -589,7 +646,7 @@ class TowerPhysicsGame {
     }
     this.updateSimulation(delta);
     if (this.status === "activating" && this.elapsed - this.activationAt >= 4100) this.finishClear();
-    this.render(now);
+    this.render();
     if (now - this.lastUiUpdate > 110) {
       this.emit();
       this.lastUiUpdate = now;
@@ -600,7 +657,8 @@ class TowerPhysicsGame {
   private updateSimulation(delta: number) {
     if (this.status !== "building") return;
     this.recoverMisplacedBodies();
-    const towerBodies = this.towerBodies();
+    const supportGraph = this.supportGraph();
+    const towerBodies = supportGraph.bodies;
     if (this.level.wind > 0 && towerBodies.length > 0) {
       const phase = Math.sin(this.elapsed / 850) + Math.sin(this.elapsed / 1600) * 0.55;
       towerBodies.forEach((body) => {
@@ -611,9 +669,10 @@ class TowerPhysicsGame {
       });
     }
 
-    const currentHeight = this.measureHeight();
+    const currentHeight = this.measureHeight(supportGraph.bodies);
     this.height = currentHeight;
-    const stable = !this.adjusting && towerBodies.length > 0 && towerBodies.every((body) => body.speed < 0.33 && Math.abs(body.angularVelocity) < 0.035);
+    const settledBodies = this.dynamicBodies.filter((body) => !this.isFallen(body));
+    const stable = !this.adjusting && towerBodies.length > 0 && settledBodies.every((body) => body.speed < 0.33 && Math.abs(body.angularVelocity) < 0.035);
     if (stable) {
       this.stableElapsed += delta;
       if (this.stableElapsed > 620) this.stableHeight = Math.max(this.stableHeight, currentHeight);
@@ -621,10 +680,9 @@ class TowerPhysicsGame {
       this.stableElapsed = 0;
     }
 
-    const fallenCount = this.dynamicBodies.filter((body) => this.isFallen(body)).length;
     const meaningfulCollapse = this.stableHeight > Math.max(5, this.level.target * 0.34)
       && currentHeight < this.stableHeight * 0.63;
-    if ((fallenCount >= 2 && this.dynamicBodies.length >= 3) || meaningfulCollapse) {
+    if (meaningfulCollapse) {
       this.collapseElapsed += delta;
       if (this.collapseElapsed > 720) this.fail();
     } else {
@@ -633,6 +691,8 @@ class TowerPhysicsGame {
 
     const rig = this.getLightRig();
     const reachesRope = towerBodies.some((body) =>
+      (supportGraph.depth.get(body) ?? 0) >= 2
+      &&
       body.bounds.min.y <= rig.ropeEndY + 10
       && body.bounds.max.x >= rig.x - 30
       && body.bounds.min.x <= rig.x + 30,
@@ -656,15 +716,50 @@ class TowerPhysicsGame {
   }
 
   private towerBodies() {
-    return this.dynamicBodies.filter((body) => !this.isFallen(body));
+    return this.supportGraph().bodies;
+  }
+
+  private supportGraph() {
+    const candidates = this.dynamicBodies.filter((body) => !this.isFallen(body));
+    const depth = new Map<TaggedBody, number>();
+    candidates.forEach((body) => {
+      if (body.bounds.max.y >= BASE_Y - 10 && body.bounds.min.y <= BASE_Y + 16) depth.set(body, 1);
+    });
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      candidates.forEach((body) => {
+        let bodyDepth = depth.get(body) ?? 0;
+        depth.forEach((supportDepth, support) => {
+          if (support === body || !this.isRestingOn(body, support)) return;
+          const nextDepth = supportDepth + 1;
+          if (nextDepth > bodyDepth) {
+            bodyDepth = nextDepth;
+            depth.set(body, nextDepth);
+            changed = true;
+          }
+        });
+      });
+    }
+    return { bodies: [...depth.keys()], depth };
+  }
+
+  private isRestingOn(body: TaggedBody, support: TaggedBody) {
+    const overlap = Math.min(body.bounds.max.x, support.bounds.max.x) - Math.max(body.bounds.min.x, support.bounds.min.x);
+    const narrowest = Math.min(body.bounds.max.x - body.bounds.min.x, support.bounds.max.x - support.bounds.min.x);
+    const verticalGap = support.bounds.min.y - body.bounds.max.y;
+    return body.position.y < support.position.y - 2
+      && overlap >= Math.max(10, narrowest * 0.2)
+      && verticalGap >= -14
+      && verticalGap <= 18;
   }
 
   private isFallen(body: Matter.Body) {
     return body.position.y > BASE_Y + 62 || body.position.x < 42 || body.position.x > WORLD_WIDTH - 42;
   }
 
-  private measureHeight() {
-    const tower = this.towerBodies();
+  private measureHeight(tower = this.towerBodies()) {
     if (!tower.length) return 0;
     const top = Math.min(...tower.map((body) => body.bounds.min.y));
     return Math.max(0, (BASE_Y - top) / PIXELS_PER_METER);
@@ -722,7 +817,7 @@ class TowerPhysicsGame {
     });
   }
 
-  private render(now: number) {
+  private render() {
     const rect = this.canvas.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const pixelWidth = Math.max(1, Math.round(rect.width * dpr));
@@ -743,7 +838,7 @@ class TowerPhysicsGame {
     const pullProgress = activating ? clamp((this.elapsed - this.activationAt - 300) / 850, 0, 1) : 0;
     this.context.save();
     this.context.translate(0, this.cameraOffsetY);
-    this.drawScene(illuminate, pullProgress, now);
+    this.drawScene(illuminate, pullProgress);
     this.drawWorld(illuminate, pullProgress);
     this.context.restore();
   }
@@ -772,7 +867,7 @@ class TowerPhysicsGame {
     };
   }
 
-  private drawScene(illuminate: number, pullProgress: number, now: number) {
+  private drawScene(illuminate: number, pullProgress: number) {
     const ctx = this.context;
     const polluted = this.artwork.polluted;
     const revived = this.artwork.revived;
@@ -783,7 +878,7 @@ class TowerPhysicsGame {
     ctx.fillRect(0, backdropTop, WORLD_WIDTH, backdropHeight);
     if (this.imageReady(polluted)) {
       ctx.globalAlpha = 0.96;
-      ctx.drawImage(polluted, 0, backdropTop, WORLD_WIDTH, backdropHeight);
+      this.drawLongBackdrop(polluted);
       ctx.globalAlpha = 1;
     } else {
       this.drawFallbackSky(illuminate);
@@ -791,7 +886,7 @@ class TowerPhysicsGame {
     if (illuminate > 0 && this.imageReady(revived)) {
       ctx.save();
       ctx.globalAlpha = illuminate;
-      ctx.drawImage(revived, 0, backdropTop, WORLD_WIDTH, backdropHeight);
+      this.drawLongBackdrop(revived);
       ctx.restore();
     }
 
@@ -807,33 +902,14 @@ class TowerPhysicsGame {
       ctx.fillRect(0, backdropTop, WORLD_WIDTH, backdropHeight);
     }
 
-    this.drawGrowth(illuminate, now);
-    ctx.fillStyle = "rgba(11, 17, 18, 0.78)";
-    ctx.fillRect(0, RECOVERY_Y + 15, WORLD_WIDTH, WORLD_HEIGHT - RECOVERY_Y);
-    ctx.fillStyle = colorMix([70, 65, 52], [88, 126, 65], illuminate);
-    ctx.fillRect(0, RECOVERY_Y - 2, WORLD_WIDTH, 18);
-
     this.drawLightRig(rig, illuminate, pullProgress);
+  }
 
-    ctx.save();
-    ctx.setLineDash([7, 8]);
-    ctx.strokeStyle = "rgba(255, 217, 122, 0.9)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(rig.x - 112, rig.goalY);
-    ctx.lineTo(rig.x + 112, rig.goalY);
-    ctx.stroke();
-    ctx.restore();
-    ctx.fillStyle = "#ffe49b";
-    ctx.font = "700 13px Microsoft YaHei";
-    ctx.fillText(`拉绳目标 ${this.level.target}m`, clamp(rig.x - 104, 18, WORLD_WIDTH - 180), rig.goalY - 12);
-
-    if (this.level.wind > 0) {
-      const windShift = Math.sin(this.elapsed / 850);
-      ctx.fillStyle = "rgba(222, 242, 211, 0.66)";
-      ctx.font = "12px Microsoft YaHei";
-      ctx.fillText(`${windShift > 0 ? "→" : "←"} 顶部侧风`, WORLD_WIDTH - 138, 49);
-    }
+  private drawLongBackdrop(image: HTMLImageElement) {
+    const ctx = this.context;
+    const renderedHeight = image.naturalHeight * (WORLD_WIDTH / image.naturalWidth);
+    // Keep the generated ground aligned with the simulation floor while exposing a long upper sky as the camera rises.
+    ctx.drawImage(image, 0, BASE_Y + 18 - renderedHeight, WORLD_WIDTH, renderedHeight);
   }
 
   private drawFallbackSky(illuminate: number) {
@@ -917,18 +993,8 @@ class TowerPhysicsGame {
 
   private drawWorld(illuminate: number, pullProgress: number) {
     const ctx = this.context;
-    ctx.fillStyle = colorMix([54, 69, 71], [89, 110, 76], illuminate);
-    ctx.fillRect(0, BASE_Y - 3, WORLD_WIDTH, 20);
-    ctx.fillStyle = "rgba(187, 209, 196, 0.38)";
-    ctx.fillRect(0, BASE_Y + 3, WORLD_WIDTH, 3);
-    ctx.fillStyle = "rgba(241, 126, 93, 0.55)";
-    ctx.fillRect(0, RECOVERY_Y + 4, WORLD_WIDTH, 2);
-    ctx.fillStyle = "rgba(222, 192, 163, 0.55)";
-    ctx.font = "12px Microsoft YaHei";
-    ctx.fillText("回收带", 32, RECOVERY_Y + 34);
-
+    this.drawSceneRuler();
     this.dynamicBodies.forEach((body) => this.drawItem(body));
-    if (this.activeHint) this.drawHint(this.activeHint);
     if (this.held) this.drawGhost(this.held);
 
     if (this.status === "activating" || this.status === "cleared") this.drawRobot(this.getLightRig(), illuminate, pullProgress);
@@ -937,6 +1003,52 @@ class TowerPhysicsGame {
       ctx.fillStyle = `rgba(255, 240, 166, ${0.12 + illuminate * 0.18})`;
       ctx.fillRect(0, -MAX_CAMERA_LIFT, WORLD_WIDTH, WORLD_HEIGHT + MAX_CAMERA_LIFT);
     }
+  }
+
+  private drawSceneRuler() {
+    const ctx = this.context;
+    const maximumMeters = Math.ceil((this.level.target + 8) / 10) * 10;
+    const rulerHeight = maximumMeters * PIXELS_PER_METER;
+    const left = 20;
+    const top = BASE_Y - rulerHeight - 14;
+    const width = 82;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(240, 246, 247, 0.11)";
+    ctx.strokeStyle = "rgba(246, 250, 251, 0.42)";
+    ctx.lineWidth = 1;
+    roundedRect(ctx, left, top, width, rulerHeight + 28, 8);
+    ctx.fill();
+    ctx.stroke();
+    const railX = left + 24;
+    ctx.strokeStyle = "rgba(252, 255, 255, 0.72)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(railX, BASE_Y);
+    ctx.lineTo(railX, BASE_Y - rulerHeight);
+    ctx.stroke();
+
+    for (let meter = 0; meter <= maximumMeters; meter += 1) {
+      const y = BASE_Y - meter * PIXELS_PER_METER;
+      const major = meter % 10 === 0;
+      const medium = meter % 5 === 0;
+      ctx.strokeStyle = major ? "rgba(255, 255, 255, 0.86)" : "rgba(245, 251, 253, 0.46)";
+      ctx.lineWidth = major ? 1.4 : 1;
+      ctx.beginPath();
+      ctx.moveTo(railX, y);
+      ctx.lineTo(railX + (major ? 19 : medium ? 13 : 8), y);
+      ctx.stroke();
+      if (major) {
+        ctx.fillStyle = "rgba(250, 254, 255, 0.86)";
+        ctx.font = "10px Microsoft YaHei";
+        ctx.fillText(`${meter}m`, railX + 24, y + 3);
+      }
+    }
+
+    const currentY = clamp(BASE_Y - this.height * PIXELS_PER_METER, BASE_Y - rulerHeight, BASE_Y);
+    ctx.fillStyle = "rgba(216, 255, 210, 0.9)";
+    ctx.fillRect(railX - 2, currentY - 1, 29, 3);
+    ctx.restore();
   }
 
   private drawItem(body: TaggedBody) {
@@ -1117,7 +1229,7 @@ function colorMix(from: [number, number, number], to: [number, number, number], 
 }
 
 function materialThumbnailStyle(itemId: ItemId): CSSProperties {
-  const sprite = ITEM_ART[itemId];
+  const sprite = ITEM_ICON_ART[itemId];
   const x = sprite.columns === 1 ? 0 : (sprite.column / (sprite.columns - 1)) * 100;
   const y = sprite.rows === 1 ? 0 : (sprite.row / (sprite.rows - 1)) * 100;
   return {
@@ -1165,43 +1277,12 @@ function GameStage({ level, onNext }: GameStageProps) {
     };
   }, [level]);
 
-  const heightLimit = Math.max(level.target * 1.13, 8);
-  const currentPercent = clamp(snapshot.height / heightLimit, 0, 1) * 100;
-  const targetPercent = clamp(level.target / heightLimit, 0, 1) * 100;
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
   const inventoryItems = (Object.keys(ITEMS) as ItemId[]).filter((itemId) => level.inventory.includes(itemId));
-  const rulerFillStyle = {
-    height: `${currentPercent}%`,
-    "--ruler-progress": `${currentPercent}%`,
-  } as CSSProperties;
-  const goalStyle = {
-    bottom: `${targetPercent}%`,
-    "--ruler-point": `${targetPercent}%`,
-  } as CSSProperties;
-  const currentStyle = {
-    bottom: `${currentPercent}%`,
-    "--ruler-point": `${currentPercent}%`,
-  } as CSSProperties;
 
   return (
     <section className="game-layout" aria-label={`第 ${level.id} 关：${level.title}`}>
-      <aside className="height-panel panel">
-        <div className="height-reading"><strong>{snapshot.height.toFixed(1)}</strong><span>m</span></div>
-        <div className="ruler-wrap" aria-label={`当前 ${snapshot.height.toFixed(1)} 米，目标 ${level.target} 米`}>
-          <div className="ruler-track">
-            <div className="ruler-fill" style={rulerFillStyle} />
-            <div className="goal-tick" style={goalStyle}><span>{level.target}m</span></div>
-            {Array.from({ length: 6 }, (_, index) => {
-              const meters = Math.round((heightLimit * index) / 5);
-              return <span className="minor-tick" key={index} style={{ bottom: `${index * 20}%` }}><i>{meters}m</i></span>;
-            })}
-            <div className="current-pin" style={currentStyle}><span>{snapshot.height.toFixed(1)}</span></div>
-          </div>
-          <span className="zero-label">0m</span>
-        </div>
-      </aside>
-
       <div className="stage-stack">
         <div className="canvas-wrap">
           <canvas
@@ -1214,7 +1295,6 @@ function GameStage({ level, onNext }: GameStageProps) {
               gameRef.current?.beginCanvasInteraction(event.clientX, event.clientY, event.pointerId);
             }}
           />
-          <div className="scene-instruction">{snapshot.status === "activating" ? "光源正在启动" : snapshot.heldItem ? `放置：${ITEMS[snapshot.heldItem].name}` : "拖入物品；拖动已放下物品继续调整"}</div>
           {isInteractive && <button className="reset-action" type="button" aria-label="重新开始本关" onClick={() => gameRef.current?.restart()}>↻</button>}
           {snapshot.status === "activating" && (
             <div className="activation-strip" aria-live="polite">
