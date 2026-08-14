@@ -1,7 +1,7 @@
 "use client";
 
 import Matter from "matter-js";
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 const { Bodies, Body, Composite, Engine, World } = Matter;
 
@@ -95,6 +95,13 @@ interface HeldItem {
   y: number;
   angle: number;
   pointerId?: number;
+}
+
+interface AdjustedBody {
+  body: TaggedBody;
+  pointerId: number;
+  offsetX: number;
+  offsetY: number;
 }
 
 interface TaggedBody extends Matter.Body {
@@ -212,15 +219,15 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
 };
 
 const LEVELS: LevelConfig[] = [
-  { id: 1, target: 3, title: "枯竭广场", subtitle: "先铺出第一块稳固地基。", baseWidth: 356, wind: 0, targetOffset: 0, inventory: ["pallet", "crate", "crate", "beam", "tire", "computer"], hintItems: ["pallet", "crate", "beam"] },
-  { id: 2, target: 5, title: "废弃街角", subtitle: "学会旋转横梁，保持重心居中。", baseWidth: 334, wind: 0, targetOffset: 0, inventory: ["pallet", "pallet", "crate", "fridge", "computer", "tire", "chair"], hintItems: ["pallet", "crate", "fridge"] },
-  { id: 3, target: 8, title: "分类废品站", subtitle: "重物在下，轻物在上。", baseWidth: 314, wind: 0, targetOffset: 0, inventory: ["slab", "container", "crate", "fridge", "washer", "beam", "tire", "bicycle"], hintItems: ["slab", "container", "fridge"] },
-  { id: 4, target: 14, title: "地下停车场", subtitle: "地基收窄，给塔身留出双侧支撑。", baseWidth: 270, wind: 0, targetOffset: 0, inventory: ["slab", "slab", "container", "container", "beam", "cabinet", "crate", "fridge", "tire", "chair"], hintItems: ["slab", "beam", "cabinet"] },
-  { id: 5, target: 23, title: "废弃商场", subtitle: "横梁跨过缺口，再向上延伸。", baseWidth: 246, wind: 0, targetOffset: 0, inventory: ["slab", "container", "container", "sofa", "beam", "beam", "scaffold", "fridge", "washer", "crate", "barrel", "bicycle"], hintItems: ["slab", "beam", "scaffold"] },
-  { id: 6, target: 35, title: "工业堆场", subtitle: "上层侧风已经出现，注意塔的重心。", baseWidth: 224, wind: 0.000004, targetOffset: 0, inventory: ["slab", "container", "container", "container", "car", "beam", "beam", "scaffold", "fridge", "cabinet", "washer", "crate", "pipes", "barrel"], hintItems: ["car", "beam", "scaffold"] },
-  { id: 7, target: 50, title: "高架桥残骸", subtitle: "干扰物更多，稳定物料更珍贵。", baseWidth: 204, wind: 0.000006, targetOffset: 0, inventory: ["slab", "car", "container", "container", "container", "scaffold", "scaffold", "beam", "beam", "fridge", "cabinet", "washer", "crate", "pipes", "tire", "bicycle"], hintItems: ["car", "beam", "scaffold"] },
-  { id: 8, target: 68, title: "旧港口", subtitle: "风向会变化，降低顶端摆动。", baseWidth: 184, wind: 0.000008, targetOffset: 0, inventory: ["slab", "slab", "car", "container", "container", "container", "container", "scaffold", "scaffold", "beam", "beam", "fridge", "cabinet", "washer", "crate", "ladder", "pipes", "tire"], hintItems: ["slab", "container", "scaffold"] },
-  { id: 9, target: 83, title: "污染塔外环", subtitle: "拉绳偏离中心，先横向架桥。", baseWidth: 164, wind: 0.00001, targetOffset: 78, inventory: ["slab", "slab", "car", "container", "container", "container", "container", "scaffold", "scaffold", "scaffold", "beam", "beam", "beam", "fridge", "cabinet", "washer", "crate", "ladder", "pipes", "tire"], hintItems: ["car", "beam", "scaffold"] },
+  { id: 1, target: 8, title: "枯竭广场", subtitle: "从任何地面位置开始搭建。", baseWidth: 356, wind: 0, targetOffset: 0, inventory: ["pallet", "crate", "crate", "beam", "tire", "computer"], hintItems: ["pallet", "crate", "beam"] },
+  { id: 2, target: 12, title: "废弃街角", subtitle: "先加宽底座，再继续加高。", baseWidth: 334, wind: 0, targetOffset: 0, inventory: ["pallet", "pallet", "crate", "fridge", "computer", "tire", "chair"], hintItems: ["pallet", "crate", "fridge"] },
+  { id: 3, target: 17, title: "分类废品站", subtitle: "重物在下，轻物在上。", baseWidth: 314, wind: 0, targetOffset: 0, inventory: ["slab", "container", "crate", "fridge", "washer", "beam", "tire", "bicycle"], hintItems: ["slab", "container", "fridge"] },
+  { id: 4, target: 28, title: "地下停车场", subtitle: "随时拖动已落地物件，修正重心。", baseWidth: 270, wind: 0, targetOffset: 0, inventory: ["slab", "slab", "container", "container", "beam", "cabinet", "crate", "fridge", "tire", "chair"], hintItems: ["slab", "beam", "cabinet"] },
+  { id: 5, target: 40, title: "废弃商场", subtitle: "横向铺开，再向上延伸。", baseWidth: 246, wind: 0, targetOffset: 0, inventory: ["slab", "container", "container", "sofa", "beam", "beam", "scaffold", "fridge", "washer", "crate", "barrel", "bicycle"], hintItems: ["slab", "beam", "scaffold"] },
+  { id: 6, target: 54, title: "工业堆场", subtitle: "侧风出现，保持塔身平衡。", baseWidth: 224, wind: 0.000004, targetOffset: 0, inventory: ["slab", "container", "container", "container", "car", "beam", "beam", "scaffold", "fridge", "cabinet", "washer", "crate", "pipes", "barrel"], hintItems: ["car", "beam", "scaffold"] },
+  { id: 7, target: 69, title: "高架桥残骸", subtitle: "用宽底座抵抗高处侧风。", baseWidth: 204, wind: 0.000006, targetOffset: 0, inventory: ["slab", "car", "container", "container", "container", "scaffold", "scaffold", "beam", "beam", "fridge", "cabinet", "washer", "crate", "pipes", "tire", "bicycle"], hintItems: ["car", "beam", "scaffold"] },
+  { id: 8, target: 81, title: "旧港口", subtitle: "用已放置物件反复修正结构。", baseWidth: 184, wind: 0.000008, targetOffset: 0, inventory: ["slab", "slab", "car", "container", "container", "container", "container", "scaffold", "scaffold", "beam", "beam", "fridge", "cabinet", "washer", "crate", "ladder", "pipes", "tire"], hintItems: ["slab", "container", "scaffold"] },
+  { id: 9, target: 91, title: "污染塔外环", subtitle: "拉绳偏离中心，调整塔顶接近绳端。", baseWidth: 164, wind: 0.00001, targetOffset: 78, inventory: ["slab", "slab", "car", "container", "container", "container", "container", "scaffold", "scaffold", "scaffold", "beam", "beam", "beam", "fridge", "cabinet", "washer", "crate", "ladder", "pipes", "tire"], hintItems: ["car", "beam", "scaffold"] },
   { id: 10, target: 99, title: "黎明光塔", subtitle: "最后一座塔，穿过风带点亮世界。", baseWidth: 144, wind: 0.000013, targetOffset: 48, inventory: ["slab", "slab", "car", "container", "container", "container", "container", "container", "scaffold", "scaffold", "scaffold", "scaffold", "beam", "beam", "beam", "fridge", "fridge", "cabinet", "washer", "crate", "ladder", "pipes"], hintItems: ["car", "beam", "scaffold"] },
 ];
 
@@ -266,6 +273,7 @@ class TowerPhysicsGame {
   private dynamicBodies: TaggedBody[] = [];
   private inventory: Record<ItemId, number>;
   private held: HeldItem | null = null;
+  private adjusting: AdjustedBody | null = null;
   private status: GameStatus = "building";
   private height = 0;
   private stableHeight = 0;
@@ -299,7 +307,7 @@ class TowerPhysicsGame {
       revived: this.loadArtwork("/assets/wasteland-revived.png"),
       junk: this.loadArtwork("/assets/junk-sprite-atlas.png"),
       risky: this.loadArtwork("/assets/risky-props.png"),
-      robot: this.loadArtwork("/assets/lumina-r07-pull.png"),
+      robot: this.loadArtwork("/assets/lumina-r07-compact.png"),
     };
     this.createWorld();
   }
@@ -332,18 +340,41 @@ class TowerPhysicsGame {
 
   startHolding(itemId: ItemId, clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building" || this.inventory[itemId] <= 0) return;
+    this.releaseAdjustedBody();
     const point = this.clientToWorld(clientX, clientY);
     this.held = { itemId, x: point.x, y: point.y, angle: 0, pointerId };
-    this.message = `正在搬运「${ITEMS[itemId].name}」：拖到中央区域后松手。Q / E 也可旋转。`;
+    this.message = `正在搬运「${ITEMS[itemId].name}」，松手即可放下。`;
     this.emit(true);
   }
 
-  pickOnCanvas(clientX: number, clientY: number, pointerId: number) {
-    if (!this.held || this.status !== "building") return;
+  beginCanvasInteraction(clientX: number, clientY: number, pointerId: number) {
+    if (this.status !== "building") return;
     const point = this.clientToWorld(clientX, clientY);
-    this.held.x = point.x;
-    this.held.y = point.y;
-    this.held.pointerId = pointerId;
+    if (this.held) {
+      this.held.x = point.x;
+      this.held.y = point.y;
+      this.held.pointerId = pointerId;
+      return;
+    }
+    const body = [...this.dynamicBodies].reverse().find((candidate) =>
+      !this.isFallen(candidate)
+      && point.x >= candidate.bounds.min.x
+      && point.x <= candidate.bounds.max.x
+      && point.y >= candidate.bounds.min.y
+      && point.y <= candidate.bounds.max.y,
+    );
+    if (!body) return;
+    this.adjusting = {
+      body,
+      pointerId,
+      offsetX: point.x - body.position.x,
+      offsetY: point.y - body.position.y,
+    };
+    Body.setStatic(body, true);
+    Body.setVelocity(body, { x: 0, y: 0 });
+    Body.setAngularVelocity(body, 0);
+    this.message = `正在调整「${body.gameItem?.name ?? "物件"}」，松手后重新结算稳定性。`;
+    this.emit(true);
   }
 
   rotateHeld(direction: -1 | 1) {
@@ -354,9 +385,15 @@ class TowerPhysicsGame {
   }
 
   cancelHeld() {
-    if (!this.held || this.status !== "building") return;
-    this.held = null;
-    this.message = "已放回当前物料，不会消耗数量。";
+    if (this.status !== "building") return;
+    if (this.releaseAdjustedBody()) {
+      this.message = "已结束调整，物件会重新遵循物理规律。";
+    } else if (this.held) {
+      this.held = null;
+      this.message = "已放回当前物料，不会消耗数量。";
+    } else {
+      return;
+    }
     this.emit(true);
   }
 
@@ -374,6 +411,7 @@ class TowerPhysicsGame {
     this.status = "building";
     this.dynamicBodies = [];
     this.held = null;
+    this.adjusting = null;
     this.inventory = inventoryFor(this.level);
     this.height = 0;
     this.stableHeight = 0;
@@ -402,11 +440,11 @@ class TowerPhysicsGame {
   }
 
   private createWorld() {
-    const base = Bodies.rectangle(BASE_X, BASE_Y + 11, this.level.baseWidth, 22, {
+    const base = Bodies.rectangle(WORLD_WIDTH / 2, BASE_Y + 11, WORLD_WIDTH, 22, {
       isStatic: true,
       friction: 1,
       frictionStatic: 1,
-      label: "base",
+      label: "open-ground",
     });
     const recoveryFloor = Bodies.rectangle(WORLD_WIDTH / 2, RECOVERY_Y + 13, WORLD_WIDTH, 26, {
       isStatic: true,
@@ -420,14 +458,37 @@ class TowerPhysicsGame {
   }
 
   private readonly onPointerMove = (event: PointerEvent) => {
-    if (!this.held || this.held.pointerId !== event.pointerId || this.status !== "building") return;
+    if (this.status !== "building") return;
+    const holding = this.held?.pointerId === event.pointerId;
+    const adjusted = this.adjusting;
+    const movingBody = adjusted?.pointerId === event.pointerId;
+    if (!holding && !movingBody) return;
     event.preventDefault();
     const point = this.clientToWorld(event.clientX, event.clientY);
-    this.held.x = point.x;
-    this.held.y = point.y;
+    if (holding && this.held) {
+      this.held.x = point.x;
+      this.held.y = point.y;
+      return;
+    }
+    if (!adjusted) return;
+    const item = adjusted.body.gameItem;
+    const halfHeight = (item?.height ?? 40) / 2;
+    const x = clamp(point.x - adjusted.offsetX, 42, WORLD_WIDTH - 42);
+    const y = clamp(point.y - adjusted.offsetY, 52, BASE_Y - halfHeight);
+    Body.setPosition(adjusted.body, { x, y });
+    Body.setVelocity(adjusted.body, { x: 0, y: 0 });
+    Body.setAngularVelocity(adjusted.body, 0);
   };
 
   private readonly onPointerUp = (event: PointerEvent) => {
+    if (this.adjusting?.pointerId === event.pointerId) {
+      event.preventDefault();
+      const itemName = this.adjusting.body.gameItem?.name ?? "物件";
+      this.releaseAdjustedBody();
+      this.message = `「${itemName}」已重新放置，继续把塔堆得更高。`;
+      this.emit(true);
+      return;
+    }
     if (!this.held || this.held.pointerId !== event.pointerId) return;
     const point = this.clientToWorld(event.clientX, event.clientY);
     const inCanvas = point.x >= 38 && point.x <= WORLD_WIDTH - 38 && point.y >= 52 && point.y <= BASE_Y - 3;
@@ -442,6 +503,11 @@ class TowerPhysicsGame {
   };
 
   private readonly onPointerCancel = (event: PointerEvent) => {
+    if (this.adjusting?.pointerId === event.pointerId) {
+      event.preventDefault();
+      this.cancelHeld();
+      return;
+    }
     if (!this.held || this.held.pointerId !== event.pointerId) return;
     event.preventDefault();
     this.cancelHeld();
@@ -456,10 +522,20 @@ class TowerPhysicsGame {
       event.preventDefault();
       this.rotateHeld(1);
     }
-    if (event.key === "Escape" && this.held) {
+    if (event.key === "Escape" && (this.held || this.adjusting)) {
       this.cancelHeld();
     }
   };
+
+  private releaseAdjustedBody() {
+    const adjusted = this.adjusting;
+    if (!adjusted) return false;
+    Body.setStatic(adjusted.body, false);
+    Body.setVelocity(adjusted.body, { x: 0, y: 0 });
+    Body.setAngularVelocity(adjusted.body, 0);
+    this.adjusting = null;
+    return true;
+  }
 
   private placeHeld(x: number, y: number) {
     if (!this.held || this.status !== "building") return;
@@ -534,7 +610,7 @@ class TowerPhysicsGame {
 
     const currentHeight = this.measureHeight();
     this.height = currentHeight;
-    const stable = towerBodies.length > 0 && towerBodies.every((body) => body.speed < 0.33 && Math.abs(body.angularVelocity) < 0.035);
+    const stable = !this.adjusting && towerBodies.length > 0 && towerBodies.every((body) => body.speed < 0.33 && Math.abs(body.angularVelocity) < 0.035);
     if (stable) {
       this.stableElapsed += delta;
       if (this.stableElapsed > 620) this.stableHeight = Math.max(this.stableHeight, currentHeight);
@@ -824,12 +900,10 @@ class TowerPhysicsGame {
 
   private drawWorld(illuminate: number, pullProgress: number) {
     const ctx = this.context;
-    const baseWidth = this.level.baseWidth;
     ctx.fillStyle = colorMix([54, 69, 71], [89, 110, 76], illuminate);
-    roundedRect(ctx, BASE_X - baseWidth / 2, BASE_Y - 3, baseWidth, 20, 6);
-    ctx.fill();
+    ctx.fillRect(0, BASE_Y - 3, WORLD_WIDTH, 20);
     ctx.fillStyle = "rgba(187, 209, 196, 0.38)";
-    ctx.fillRect(BASE_X - baseWidth / 2 + 10, BASE_Y + 3, baseWidth - 20, 3);
+    ctx.fillRect(0, BASE_Y + 3, WORLD_WIDTH, 3);
     ctx.fillStyle = "rgba(241, 126, 93, 0.55)";
     ctx.fillRect(0, RECOVERY_Y + 4, WORLD_WIDTH, 2);
     ctx.fillStyle = "rgba(222, 192, 163, 0.55)";
@@ -975,10 +1049,10 @@ class TowerPhysicsGame {
     const ctx = this.context;
     const appearance = clamp((this.elapsed - this.activationAt) / 620, 0, 1);
     const robot = this.artwork.robot;
-    const robotWidth = 126;
-    const robotHeight = 189;
-    const robotX = rig.x - 145;
-    const robotY = clamp(rig.ropeEndY - 145 + (1 - appearance) * 34, 2, BASE_Y - robotHeight + 22);
+    const robotWidth = 166;
+    const robotHeight = 148;
+    const robotX = rig.x - 164;
+    const robotY = clamp(rig.ropeEndY - 126 + (1 - appearance) * 28, 2, BASE_Y - robotHeight + 22);
 
     ctx.save();
     ctx.globalAlpha = appearance * 0.92;
@@ -1037,16 +1111,6 @@ function materialThumbnailStyle(itemId: ItemId): CSSProperties {
   };
 }
 
-function roleLabel(role: ItemRole) {
-  return {
-    foundation: "地基",
-    bridge: "桥接",
-    block: "填充",
-    tall: "竖向",
-    risky: "高风险",
-  }[role];
-}
-
 function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
   const r = Math.min(radius, Math.abs(width) / 2, Math.abs(height) / 2);
   ctx.beginPath();
@@ -1064,22 +1128,18 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width:
 
 interface GameStageProps {
   level: LevelConfig;
-  onClear: () => void;
   onNext: () => void;
 }
 
-function GameStage({ level, onClear, onNext }: GameStageProps) {
+function GameStage({ level, onNext }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<TowerPhysicsGame | null>(null);
-  const onClearRef = useRef(onClear);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
-
-  useEffect(() => { onClearRef.current = onClear; }, [onClear]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const game = new TowerPhysicsGame(canvas, level, setSnapshot, () => onClearRef.current());
+    const game = new TowerPhysicsGame(canvas, level, setSnapshot, () => undefined);
     gameRef.current = game;
     game.start();
     return () => {
@@ -1094,7 +1154,6 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
   const inventoryItems = (Object.keys(ITEMS) as ItemId[]).filter((itemId) => level.inventory.includes(itemId));
-  const stableState = snapshot.height - snapshot.stableHeight > 0.75 ? "正在稳定" : "稳定监测";
   const rulerFillStyle = {
     height: `${currentPercent}%`,
     "--ruler-progress": `${currentPercent}%`,
@@ -1111,9 +1170,7 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
   return (
     <section className="game-layout" aria-label={`第 ${level.id} 关：${level.title}`}>
       <aside className="height-panel panel">
-        <div className="panel-kicker">高度仪</div>
         <div className="height-reading"><strong>{snapshot.height.toFixed(1)}</strong><span>m</span></div>
-        <div className="height-sub"><span>稳定记录 {snapshot.stableHeight.toFixed(1)}m</span><b>{stableState}</b></div>
         <div className="ruler-wrap" aria-label={`当前 ${snapshot.height.toFixed(1)} 米，目标 ${level.target} 米`}>
           <div className="ruler-track">
             <div className="ruler-fill" style={rulerFillStyle} />
@@ -1129,10 +1186,6 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
       </aside>
 
       <div className="stage-stack">
-        <div className="stage-caption">
-          <div><span className="level-badge">关卡 {level.id}</span><strong>{level.title}</strong></div>
-          <span className={snapshot.wind ? "wind-on" : "wind-off"}>{snapshot.wind ? "侧风活跃" : "无侧风"}</span>
-        </div>
         <div className="canvas-wrap">
           <canvas
             ref={canvasRef}
@@ -1141,10 +1194,11 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
             onPointerDown={(event) => {
               event.preventDefault();
               event.currentTarget.setPointerCapture?.(event.pointerId);
-              gameRef.current?.pickOnCanvas(event.clientX, event.clientY, event.pointerId);
+              gameRef.current?.beginCanvasInteraction(event.clientX, event.clientY, event.pointerId);
             }}
           />
-          <div className="scene-instruction">{snapshot.status === "activating" ? "拾光者正在拉下短绳，人工太阳即将点亮" : snapshot.heldItem ? `正在搬运：${ITEMS[snapshot.heldItem].name}` : "选物料后拖至落点；绿色虚线为提示位置"}</div>
+          <div className="scene-instruction">{snapshot.status === "activating" ? "光源正在启动" : snapshot.heldItem ? `放置：${ITEMS[snapshot.heldItem].name}` : "拖入物品；拖动已放下物品继续调整"}</div>
+          {isInteractive && <button className="reset-action" type="button" aria-label="重新开始本关" onClick={() => gameRef.current?.restart()}>↻</button>}
           {snapshot.status === "activating" && (
             <div className="activation-strip" aria-live="polite">
               <span>人工太阳启动中</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
@@ -1160,23 +1214,10 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
             </div>
           )}
         </div>
-        <div className="message-bar" role="status"><span>◆</span>{snapshot.message}</div>
-        <div className="build-controls">
-          <button className="hint-button" disabled={!isInteractive || snapshot.hintsLeft === 0} onClick={() => gameRef.current?.useHint()}>
-            <span>提示</span><b>{snapshot.hintsLeft}/3</b>
-          </button>
-          <div className="rotate-group" aria-label="旋转当前物件">
-            <button disabled={!snapshot.heldItem || !isInteractive} onClick={() => gameRef.current?.rotateHeld(-1)}>↺ 15°</button>
-            <button disabled={!snapshot.heldItem || !isInteractive} onClick={() => gameRef.current?.rotateHeld(1)}>15° ↻</button>
-          </div>
-          {snapshot.heldItem && isInteractive && <button className="cancel-button" onClick={() => gameRef.current?.cancelHeld()}>取消选材</button>}
-          <button className="restart-button" onClick={() => gameRef.current?.restart()}>重试本关</button>
-        </div>
-        {snapshot.hint && <div className="hint-copy"><b>明确提示</b>{snapshot.hint.text}</div>}
       </div>
 
       <aside className="inventory-panel panel">
-        <div className="inventory-head"><div><div className="panel-kicker">现实废品库</div><strong>剩余 {availablePieces} / {level.inventory.length}</strong></div><span>拖拽 / 点选</span></div>
+        <div className="inventory-head"><strong>垃圾物品</strong><span>{availablePieces}</span></div>
         <div className="inventory-list">
           {inventoryItems
             .map((id) => {
@@ -1203,7 +1244,7 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
                   aria-label={`拖拽 ${item.name}，剩余 ${count} 件`}
                 >
                   <span className={`material-icon ${item.role}`} style={materialThumbnailStyle(item.id)} aria-hidden="true" />
-                  <span className="material-copy"><b>{item.name}</b><small><em>{roleLabel(item.role)}</em>{item.trait}</small></span>
+                  <span className="material-copy"><b>{item.name}</b></span>
                   <span className="material-count">×{count}</span>
                 </button>
               );
@@ -1216,64 +1257,17 @@ function GameStage({ level, onClear, onNext }: GameStageProps) {
 }
 
 export function DawnTowerGame() {
-  const [unlocked, setUnlocked] = useState(1);
   const [activeLevel, setActiveLevel] = useState(1);
 
-  useEffect(() => {
-    const saved = Number(window.localStorage.getItem("dawn-tower-unlocked"));
-    if (!Number.isFinite(saved) || saved < 1 || saved > 10) return;
-    const frame = window.requestAnimationFrame(() => setUnlocked(saved));
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
-
-  useEffect(() => {
-    if (unlocked > 1) window.localStorage.setItem("dawn-tower-unlocked", String(unlocked));
-  }, [unlocked]);
-
   const level = LEVELS[activeLevel - 1];
-  const clearLevel = useCallback(() => {
-    setUnlocked((current) => Math.max(current, Math.min(10, activeLevel + 1)));
-  }, [activeLevel]);
-  const nextLevel = useCallback(() => {
+  const nextLevel = () => {
     setActiveLevel((current) => (current === 10 ? 10 : current + 1));
-  }, []);
+  };
 
   return (
-    <main className="game-app">
-      <header className="game-header">
-        <div className="brand-lockup">
-          <span className="brand-sun">✦</span>
-          <div><p>ASHES TO AURORA · PHYSICS PUZZLE</p><h1>余烬之光</h1></div>
-        </div>
-        <div className="story-copy">用垃圾搭出一座不会倒的高塔。够高、够稳，拾光者便会拉下替代太阳的拉绳。</div>
-      </header>
-
-      <nav className="level-rail" aria-label="选择关卡">
-        {LEVELS.map((candidate) => {
-          const isLocked = candidate.id > unlocked;
-          return (
-            <button
-              key={candidate.id}
-              className={`${candidate.id === activeLevel ? "active" : ""} ${isLocked ? "locked" : ""}`}
-              disabled={isLocked}
-              onClick={() => setActiveLevel(candidate.id)}
-              aria-label={isLocked ? `第 ${candidate.id} 关尚未解锁` : `进入第 ${candidate.id} 关，目标 ${candidate.target} 米`}
-            >
-              <span>{isLocked ? "⌁" : candidate.id}</span><small>{candidate.target}m</small>
-            </button>
-          );
-        })}
-      </nav>
-
-      <section className="level-summary">
-        <div><span>目标高度</span><strong>{level.target}m</strong></div>
-        <p>{level.subtitle}</p>
-        <div className="progress-note">已解锁 <b>{unlocked}</b> / 10 关</div>
-      </section>
-
-      <GameStage key={level.id} level={level} onClear={clearLevel} onNext={nextLevel} />
-
-      <footer className="game-footer">原创回收机器人「拾光者」· 物理堆叠原型 · 鼠标/触摸拖拽 · Q/E 旋转</footer>
+    <main className="game-app minimal-game">
+      <h1 className="sr-only">余烬之光</h1>
+      <GameStage key={level.id} level={level} onNext={nextLevel} />
     </main>
   );
 }
