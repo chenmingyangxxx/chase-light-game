@@ -3,7 +3,7 @@
 import Matter from "matter-js";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-const { Bodies, Body, Composite, Engine, World } = Matter;
+const { Bodies, Body, Composite, Engine, Events, World } = Matter;
 
 // The playable camera is portrait first. The physics world remains taller than
 // one viewport so the full 0–99 m climb can be inspected by swiping upward.
@@ -40,6 +40,10 @@ const ROBOT_CLIMB_HEIGHT = 86;
 const ROBOT_PLUCK_HEIGHT = 91;
 const PHYSICS_MASS_PER_KG = 0.045;
 const STRENGTH_MULTIPLIER = 3;
+// Keep the robot's authored real-world profile, but soften the effective
+// moving payload by 50% so the climb remains readable without making every
+// otherwise sound tower fail under a single gait cycle.
+const ROBOT_CLIMB_LOAD_MULTIPLIER = 0.5;
 const RECOVERY_Y = BASE_Y + 113;
 const BACKDROP_TOP = 600;
 const BACKDROP_BOTTOM = BASE_Y + 149;
@@ -387,12 +391,217 @@ function initialSnapshot(level: LevelConfig): GameSnapshot {
   };
 }
 
+/**
+ * Lightweight procedural sound design. The game only creates an AudioContext
+ * after a player gesture, so it works with desktop and mobile autoplay rules
+ * without adding a large library of downloaded sound files.
+ */
+class GameAudio {
+  private context: AudioContext | null = null;
+  private master: GainNode | null = null;
+  private effects: GainNode | null = null;
+  private ambience: GainNode | null = null;
+  private ambientSources: AudioScheduledSourceNode[] = [];
+  private enabled = true;
+  private gameplayActive = false;
+  private lastImpactAt = 0;
+  private lastStrainAt = 0;
+
+  async unlock() {
+    if (!this.context) {
+      const context = new AudioContext();
+      const master = context.createGain();
+      const effects = context.createGain();
+      const ambience = context.createGain();
+      master.gain.value = this.enabled ? 0.72 : 0;
+      effects.gain.value = 0.92;
+      ambience.gain.value = 0.34;
+      effects.connect(master);
+      ambience.connect(master);
+      master.connect(context.destination);
+      this.context = context;
+      this.master = master;
+      this.effects = effects;
+      this.ambience = ambience;
+    }
+    if (this.context.state === "suspended") await this.context.resume();
+    if (this.gameplayActive) this.startAmbience();
+  }
+
+  setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    if (!this.context || !this.master) return;
+    const now = this.context.currentTime;
+    this.master.gain.cancelScheduledValues(now);
+    this.master.gain.setTargetAtTime(enabled ? 0.72 : 0, now, 0.035);
+    if (enabled && this.gameplayActive) this.startAmbience();
+  }
+
+  startGameplay() {
+    this.gameplayActive = true;
+    this.startAmbience();
+  }
+
+  stopGameplay() {
+    this.gameplayActive = false;
+    this.stopAmbience();
+  }
+
+  ui() {
+    this.tone(640, 920, 0.065, 0.038, "triangle");
+  }
+
+  hint() {
+    this.tone(520, 780, 0.11, 0.045, "sine");
+    this.tone(780, 1040, 0.1, 0.032, "sine", 0.075);
+  }
+
+  pickup(item: ItemDefinition) {
+    const mass = ITEM_PHYSICS[item.id].massKg;
+    const base = clamp(430 - Math.log10(Math.max(1, mass)) * 95, 145, 390);
+    this.tone(base * 1.35, base, 0.085, 0.052, "triangle");
+    this.noise(0.045, 0.02, 2300);
+  }
+
+  place(item: ItemDefinition) {
+    const mass = ITEM_PHYSICS[item.id].massKg;
+    const weight = clamp(Math.log10(Math.max(10, mass)) / 3.4, 0.25, 1);
+    this.tone(125 + (1 - weight) * 70, 58 + (1 - weight) * 35, 0.16, 0.065 + weight * 0.035, "sine");
+    this.noise(0.1, 0.025 + weight * 0.025, 900 + (1 - weight) * 900);
+  }
+
+  impact(intensity: number) {
+    const nowMs = performance.now();
+    if (nowMs - this.lastImpactAt < 95 || intensity < 0.07) return;
+    this.lastImpactAt = nowMs;
+    const strength = clamp(intensity, 0.08, 1);
+    this.tone(110, 48, 0.09 + strength * 0.08, 0.025 + strength * 0.055, "sine");
+    this.noise(0.05 + strength * 0.07, 0.012 + strength * 0.035, 680 + strength * 1200);
+  }
+
+  strain(stress: number) {
+    const nowMs = performance.now();
+    if (nowMs - this.lastStrainAt < 680) return;
+    this.lastStrainAt = nowMs;
+    const amount = clamp(stress, 0, 2);
+    this.tone(190 + amount * 28, 88, 0.32, 0.025 + amount * 0.018, "sawtooth");
+    this.noise(0.24, 0.022 + amount * 0.012, 520);
+  }
+
+  robotStep(step: number) {
+    const variation = (step % 3) * 18;
+    this.tone(310 + variation, 470 + variation, 0.105, 0.036, "square");
+    this.tone(92, 62, 0.11, 0.046, "sine", 0.055);
+  }
+
+  failure() {
+    this.tone(210, 46, 0.68, 0.105, "sawtooth");
+    this.noise(0.72, 0.09, 560);
+    this.tone(118, 38, 0.58, 0.075, "sine", 0.18);
+  }
+
+  private startAmbience() {
+    if (!this.enabled || !this.gameplayActive || !this.context || !this.ambience || this.ambientSources.length) return;
+    const context = this.context;
+    const seconds = 3;
+    const buffer = context.createBuffer(1, context.sampleRate * seconds, context.sampleRate);
+    const data = buffer.getChannelData(0);
+    let drift = 0;
+    for (let index = 0; index < data.length; index += 1) {
+      drift = drift * 0.985 + (Math.random() * 2 - 1) * 0.015;
+      data[index] = drift + (Math.random() * 2 - 1) * 0.07;
+    }
+    const wind = context.createBufferSource();
+    const windFilter = context.createBiquadFilter();
+    const windGain = context.createGain();
+    wind.buffer = buffer;
+    wind.loop = true;
+    windFilter.type = "bandpass";
+    windFilter.frequency.value = 410;
+    windFilter.Q.value = 0.48;
+    windGain.gain.value = 0.075;
+    wind.connect(windFilter);
+    windFilter.connect(windGain);
+    windGain.connect(this.ambience);
+
+    const hum = context.createOscillator();
+    const humFilter = context.createBiquadFilter();
+    const humGain = context.createGain();
+    hum.type = "sine";
+    hum.frequency.value = 42;
+    humFilter.type = "lowpass";
+    humFilter.frequency.value = 120;
+    humGain.gain.value = 0.018;
+    hum.connect(humFilter);
+    humFilter.connect(humGain);
+    humGain.connect(this.ambience);
+    wind.start();
+    hum.start();
+    this.ambientSources = [wind, hum];
+  }
+
+  private stopAmbience() {
+    this.ambientSources.forEach((source) => {
+      try { source.stop(); } catch { /* source already stopped */ }
+      source.disconnect();
+    });
+    this.ambientSources = [];
+  }
+
+  private tone(
+    startFrequency: number,
+    endFrequency: number,
+    duration: number,
+    volume: number,
+    type: OscillatorType,
+    delay = 0,
+  ) {
+    if (!this.enabled || !this.context || !this.effects) return;
+    const context = this.context;
+    const start = context.currentTime + delay;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(Math.max(20, startFrequency), start);
+    oscillator.frequency.exponentialRampToValueAtTime(Math.max(20, endFrequency), start + duration);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), start + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    oscillator.connect(gain);
+    gain.connect(this.effects);
+    oscillator.start(start);
+    oscillator.stop(start + duration + 0.02);
+  }
+
+  private noise(duration: number, volume: number, cutoff: number) {
+    if (!this.enabled || !this.context || !this.effects) return;
+    const context = this.context;
+    const frameCount = Math.ceil(context.sampleRate * duration);
+    const buffer = context.createBuffer(1, frameCount, context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let index = 0; index < data.length; index += 1) data[index] = Math.random() * 2 - 1;
+    const source = context.createBufferSource();
+    const filter = context.createBiquadFilter();
+    const gain = context.createGain();
+    filter.type = "lowpass";
+    filter.frequency.value = cutoff;
+    gain.gain.setValueAtTime(volume, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + duration);
+    source.buffer = buffer;
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.effects);
+    source.start();
+  }
+}
+
 class TowerPhysicsGame {
   private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
   private readonly level: LevelConfig;
   private readonly onUpdate: (snapshot: GameSnapshot) => void;
   private readonly onClear: () => void;
+  private readonly audio: GameAudio;
   private engine: Matter.Engine;
   private dynamicBodies: TaggedBody[] = [];
   private inventory: Record<ItemId, number>;
@@ -412,6 +621,7 @@ class TowerPhysicsGame {
   private accumulator = 0;
   private lastUiUpdate = 0;
   private activationAt = 0;
+  private lastRobotAudioStep = -1;
   private frameId = 0;
   private cameraOffsetY = VIEW_GROUND_CAMERA;
   private cameraManualOffsetY = 0;
@@ -435,7 +645,13 @@ class TowerPhysicsGame {
     HTMLImageElement
   >;
 
-  constructor(canvas: HTMLCanvasElement, level: LevelConfig, onUpdate: (snapshot: GameSnapshot) => void, onClear: () => void) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    level: LevelConfig,
+    onUpdate: (snapshot: GameSnapshot) => void,
+    onClear: () => void,
+    audio: GameAudio,
+  ) {
     const context = canvas.getContext("2d");
     if (!context) throw new Error("当前浏览器不支持 Canvas 渲染。");
     this.canvas = canvas;
@@ -443,6 +659,7 @@ class TowerPhysicsGame {
     this.level = level;
     this.onUpdate = onUpdate;
     this.onClear = onClear;
+    this.audio = audio;
     this.inventory = inventoryFor(level);
     this.engine = this.createEngine();
     this.artwork = {
@@ -504,6 +721,7 @@ class TowerPhysicsGame {
     if (this.status !== "building") return;
     const point = this.clientToWorld(clientX, clientY);
     this.held = { itemId, x: point.x, y: point.y, angle: 0, pointerId };
+    this.audio.pickup(ITEMS[itemId]);
     this.message = `正在搬运「${ITEMS[itemId].name}」，松手即可放下。`;
     this.emit(true);
   }
@@ -583,6 +801,7 @@ class TowerPhysicsGame {
     if (this.status !== "building" || this.hintsLeft <= 0) return;
     const hints = hintsFor(this.level);
     this.activeHint = hints[this.hintIndex];
+    this.audio.hint();
     this.message = this.activeHint.text;
     this.hintsLeft -= 1;
     this.hintIndex = Math.min(this.hintIndex + 1, hints.length - 1);
@@ -600,6 +819,7 @@ class TowerPhysicsGame {
     this.stableElapsed = 0;
     this.collapseElapsed = 0;
     this.activationAt = 0;
+    this.lastRobotAudioStep = -1;
     this.hintIndex = 0;
     this.hintsLeft = 3;
     this.activeHint = null;
@@ -616,13 +836,22 @@ class TowerPhysicsGame {
   }
 
   private createEngine() {
-    return Engine.create({
+    const engine = Engine.create({
       enableSleeping: true,
       positionIterations: 16,
       velocityIterations: 14,
       constraintIterations: 4,
       gravity: { x: 0, y: 1, scale: 0.00108 },
     });
+    Events.on(engine, "collisionStart", (event) => {
+      event.pairs.forEach((pair) => {
+        if (!(pair.bodyA as TaggedBody).gameItem && !(pair.bodyB as TaggedBody).gameItem) return;
+        const relativeX = pair.bodyA.velocity.x - pair.bodyB.velocity.x;
+        const relativeY = pair.bodyA.velocity.y - pair.bodyB.velocity.y;
+        this.audio.impact(Math.hypot(relativeX, relativeY) / 5.5);
+      });
+    });
+    return engine;
   }
 
   private createWorld() {
@@ -748,6 +977,7 @@ class TowerPhysicsGame {
     adjusted.body.sleepCounter = 0;
     Body.setVelocity(adjusted.body, { x: 0, y: 0 });
     Body.setAngularVelocity(adjusted.body, 0);
+    if (adjusted.body.gameItem) this.audio.place(adjusted.body.gameItem);
     this.adjusting = null;
     return true;
   }
@@ -764,6 +994,7 @@ class TowerPhysicsGame {
     const body = this.makeBody(item, dropX, dropY, this.held.angle);
     this.dynamicBodies.push(body);
     World.add(this.engine.world, body);
+    this.audio.place(item);
     this.inventory[item.id] -= 1;
     if (this.activeHint?.itemId === item.id) this.activeHint = null;
     this.message = `「${item.name}」已投入建造区，物理引擎正在结算受力与重心。`;
@@ -970,7 +1201,10 @@ class TowerPhysicsGame {
       const route = this.climbRoute();
       if (route.length >= 2) {
         const support = this.robotClimbPose(route).anchor.support;
-        carriedKg.set(support, (carriedKg.get(support) ?? 0) + ROBOT_PHYSICS.massKg);
+        carriedKg.set(
+          support,
+          (carriedKg.get(support) ?? 0) + ROBOT_PHYSICS.massKg * ROBOT_CLIMB_LOAD_MULTIPLIER,
+        );
       }
     }
 
@@ -1006,6 +1240,7 @@ class TowerPhysicsGame {
       const overload = Math.max(0, stressRatio - 1);
       let damage = body.gameStressDamage ?? 0;
       if (overload > 0) {
+        this.audio.strain(overload + damage);
         damage += delta * (0.0002 + overload * 0.00055) * (1.08 - physics.flexibility * 0.18);
       } else if (!body.gameFracturedAt) {
         damage = Math.max(0, damage - delta * 0.00006);
@@ -1079,6 +1314,7 @@ class TowerPhysicsGame {
     if (this.status !== "building") return;
     this.status = "activating";
     this.activationAt = this.elapsed;
+    this.lastRobotAudioStep = -1;
     this.dynamicBodies.forEach((body) => Matter.Sleeping.set(body, false));
     // Start the cinematic at ground level even if the player was inspecting
     // the top of the tower, then hand control to the robot-follow camera.
@@ -1106,6 +1342,7 @@ class TowerPhysicsGame {
   private fail(reason = "塔身失去支撑并整体倒塌。把宽重物件放在底部、让重心保持居中，再试一次，你一定能搭得更稳！") {
     if (this.status !== "building" && this.status !== "activating") return;
     this.status = "failed";
+    this.audio.failure();
     this.message = reason;
     this.emit(true);
   }
@@ -1659,7 +1896,7 @@ class TowerPhysicsGame {
       : routeIndex === 0
         ? Math.min(5, Math.floor(frameProgress * 6))
         : 2 + Math.min(3, Math.floor(frameProgress * 4));
-    return { anchor, climb, frame, routePosition, sequenceElapsed };
+    return { anchor, climb, frame, routePosition, routeIndex, sequenceElapsed };
   }
 
   private applyRobotWeight() {
@@ -1667,10 +1904,14 @@ class TowerPhysicsGame {
     if (route.length < 2) return;
     const pose = this.robotClimbPose(route);
     const support = pose.anchor.support;
+    if (pose.routeIndex !== this.lastRobotAudioStep) {
+      this.lastRobotAudioStep = pose.routeIndex;
+      this.audio.robotStep(pose.routeIndex);
+    }
     Matter.Sleeping.set(support, false);
     const gait = Math.sin(pose.routePosition * Math.PI * 2);
     const gravityScale = this.engine.gravity.scale || 0.001;
-    const robotMatterMass = ROBOT_PHYSICS.massKg * PHYSICS_MASS_PER_KG;
+    const robotMatterMass = ROBOT_PHYSICS.massKg * PHYSICS_MASS_PER_KG * ROBOT_CLIMB_LOAD_MULTIPLIER;
     const gaitPulse = 1 + Math.abs(gait) * (0.16 - ROBOT_PHYSICS.flexibility * 0.08);
     const downwardForce = robotMatterMass * gravityScale * gaitPulse;
     const lateralForce = pose.sequenceElapsed < ROBOT_CLIMB_DURATION
@@ -2075,14 +2316,33 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width:
   ctx.closePath();
 }
 
+function SoundGlyph({ enabled }: { enabled: boolean }) {
+  return (
+    <svg className="sound-glyph" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 9.2h3.4L12 5.5v13l-4.6-3.7H4z" />
+      {enabled ? (
+        <>
+          <path className="sound-wave" d="M15.1 8.4c1.9 1.9 1.9 5.3 0 7.2" />
+          <path className="sound-wave" d="M17.8 6c3.4 3.3 3.4 8.7 0 12" />
+        </>
+      ) : (
+        <path className="sound-wave" d="m15.2 9 5 6m0-6-5 6" />
+      )}
+    </svg>
+  );
+}
+
 interface GameStageProps {
   level: LevelConfig;
   onExit: () => void;
+  audio: GameAudio;
+  soundEnabled: boolean;
+  onSoundToggle: () => void;
 }
 
 type ConfirmationAction = "reset" | "exit" | null;
 
-function GameStage({ level, onExit }: GameStageProps) {
+function GameStage({ level, onExit, audio, soundEnabled, onSoundToggle }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<TowerPhysicsGame | null>(null);
   const endingVideoRef = useRef<HTMLVideoElement>(null);
@@ -2090,21 +2350,28 @@ function GameStage({ level, onExit }: GameStageProps) {
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
   const [endingComplete, setEndingComplete] = useState(false);
+  const [endingNeedsGesture, setEndingNeedsGesture] = useState(false);
+  const [endingReady, setEndingReady] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    audio.startGameplay();
     const game = new TowerPhysicsGame(canvas, level, setSnapshot, () => {
+      audio.stopGameplay();
       setEndingComplete(false);
+      setEndingNeedsGesture(false);
+      setEndingReady(false);
       setEndingPlaying(true);
-    });
+    }, audio);
     gameRef.current = game;
     game.start();
     return () => {
       game.destroy();
+      audio.stopGameplay();
       gameRef.current = null;
     };
-  }, [level]);
+  }, [audio, level]);
 
   useEffect(() => {
     if (!confirmation) return;
@@ -2121,8 +2388,8 @@ function GameStage({ level, onExit }: GameStageProps) {
     if (!video) return;
     video.currentTime = 0;
     const playback = video.play();
-    if (playback) void playback.catch(() => setEndingComplete(true));
-  }, [endingPlaying]);
+    if (playback) void playback.catch(() => setEndingNeedsGesture(true));
+  }, [endingPlaying, soundEnabled]);
 
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
@@ -2148,9 +2415,21 @@ function GameStage({ level, onExit }: GameStageProps) {
           />
           {isInteractive && (
             <div className="stage-actions" aria-label="游戏操作">
-              <button className="stage-action reset-action" type="button" onClick={() => setConfirmation("reset")}>重置</button>
-              <button className="stage-action exit-action" type="button" onClick={() => setConfirmation("exit")}>退出</button>
+              <button className="stage-action reset-action" type="button" onClick={() => { audio.ui(); setConfirmation("reset"); }}>重置</button>
+              <button className="stage-action exit-action" type="button" onClick={() => { audio.ui(); setConfirmation("exit"); }}>退出</button>
             </div>
+          )}
+          {!endingPlaying && (
+            <button
+              className="game-sound-toggle"
+              type="button"
+              aria-pressed={soundEnabled}
+              aria-label={soundEnabled ? "关闭游戏声音" : "开启游戏声音"}
+              onClick={() => { audio.ui(); onSoundToggle(); }}
+            >
+              <SoundGlyph enabled={soundEnabled} />
+              <b>{soundEnabled ? "声音" : "静音"}</b>
+            </button>
           )}
           {snapshot.status === "activating" && (
             <div className="activation-strip" aria-live="polite">
@@ -2201,6 +2480,7 @@ function GameStage({ level, onExit }: GameStageProps) {
                 <p>{snapshot.message}</p>
                 <div className="dialog-actions single-action">
                   <button className="dialog-button primary" type="button" onClick={() => {
+                    audio.ui();
                     setConfirmation(null);
                     gameRef.current?.restart();
                   }}>
@@ -2223,11 +2503,12 @@ function GameStage({ level, onExit }: GameStageProps) {
                 <strong id="confirmation-title">{confirmation === "reset" ? "重新搭建？" : "退出游戏？"}</strong>
                 <p>{confirmation === "reset" ? "当前堆叠进度将被清空。" : "将返回游戏启动页面。"}</p>
                 <div className="dialog-actions">
-                  <button className="dialog-button ghost" type="button" onClick={() => setConfirmation(null)}>取消</button>
+                  <button className="dialog-button ghost" type="button" onClick={() => { audio.ui(); setConfirmation(null); }}>取消</button>
                   <button
                     className="dialog-button primary"
                     type="button"
                     onClick={() => {
+                      audio.ui();
                       setConfirmation(null);
                       if (confirmation === "reset") gameRef.current?.restart();
                       else onExit();
@@ -2240,24 +2521,54 @@ function GameStage({ level, onExit }: GameStageProps) {
             </div>
           )}
           {endingPlaying && (
-            <div className={`ending-cinematic ${endingComplete ? "is-complete" : ""}`} aria-label="通关结尾">
+            <div className={`ending-cinematic ${endingReady ? "is-ready" : ""} ${endingComplete ? "is-complete" : ""}`} aria-label="通关结尾">
               <video
                 ref={endingVideoRef}
                 className="ending-cinematic-video"
                 autoPlay
-                muted
+                muted={!soundEnabled}
                 playsInline
                 preload="auto"
+                onCanPlay={(event) => {
+                  event.currentTarget.volume = 1;
+                  setEndingReady(true);
+                }}
+                onTimeUpdate={(event) => {
+                  const video = event.currentTarget;
+                  if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+                  const remaining = video.duration - video.currentTime;
+                  video.volume = remaining >= 2.8 ? 1 : smoothStep(remaining / 2.8);
+                }}
                 onEnded={(event) => {
                   const video = event.currentTarget;
-                  if (Number.isFinite(video.duration)) video.currentTime = Math.max(0, video.duration - 0.04);
-                  video.pause();
-                  setEndingComplete(true);
+                  if (!Number.isFinite(video.duration)) {
+                    setEndingComplete(true);
+                    return;
+                  }
+                  const holdAt = Math.max(0, video.duration - 0.08);
+                  const revealEnding = () => {
+                    video.pause();
+                    setEndingComplete(true);
+                  };
+                  video.addEventListener("seeked", revealEnding, { once: true });
+                  video.currentTime = holdAt;
                 }}
                 onError={() => setEndingComplete(true)}
               >
                 <source src="/assets/victory-ending.mp4" type="video/mp4" />
               </video>
+              {endingNeedsGesture && !endingComplete && (
+                <button
+                  className="ending-play-button"
+                  type="button"
+                  onClick={() => {
+                    setEndingNeedsGesture(false);
+                    void endingVideoRef.current?.play().catch(() => setEndingNeedsGesture(true));
+                  }}
+                >
+                  播放结局与音乐
+                </button>
+              )}
               {endingComplete && (
                 <>
                   <div className="ending-wordmark" aria-label="追光">
@@ -2268,6 +2579,7 @@ function GameStage({ level, onExit }: GameStageProps) {
                     className="ending-home-button"
                     type="button"
                     onClick={() => {
+                      audio.ui();
                       setEndingPlaying(false);
                       setEndingComplete(false);
                       onExit();
@@ -2287,9 +2599,58 @@ function GameStage({ level, onExit }: GameStageProps) {
 
 export function DawnTowerGame() {
   const level = LEVELS[0];
+  const audioRef = useRef<GameAudio | null>(null);
+  const launchAudioRef = useRef<HTMLAudioElement>(null);
+  if (!audioRef.current) audioRef.current = new GameAudio();
+  const audio = audioRef.current;
   const [loading, setLoading] = useState(8);
   const [started, setStarted] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [launchLeaving, setLaunchLeaving] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundUnlocked, setSoundUnlocked] = useState(false);
+
+  const toggleSound = async () => {
+    const shouldEnable = !soundEnabled || !soundUnlocked;
+    if (shouldEnable) {
+      try {
+        await audio.unlock();
+        audio.setEnabled(true);
+        setSoundEnabled(true);
+        setSoundUnlocked(true);
+        if (!started && launchAudioRef.current) {
+          launchAudioRef.current.volume = 0.78;
+          await launchAudioRef.current.play();
+        }
+      } catch {
+        setSoundEnabled(false);
+      }
+      return;
+    }
+    audio.setEnabled(false);
+    setSoundEnabled(false);
+    launchAudioRef.current?.pause();
+  };
+
+  const startGame = async () => {
+    if (launchLeaving) return;
+    setLaunchLeaving(true);
+    if (soundEnabled) {
+      try {
+        await audio.unlock();
+        audio.setEnabled(true);
+        setSoundUnlocked(true);
+        audio.ui();
+      } catch {
+        setSoundEnabled(false);
+      }
+    }
+    launchAudioRef.current?.pause();
+    window.setTimeout(() => {
+      setStarted(true);
+      setLaunchLeaving(false);
+    }, 680);
+  };
 
   useEffect(() => {
     if (started) return;
@@ -2306,6 +2667,14 @@ export function DawnTowerGame() {
   }, [started]);
 
   useEffect(() => {
+    if (started || !soundEnabled || !soundUnlocked) return;
+    const player = launchAudioRef.current;
+    if (!player) return;
+    player.volume = 0.78;
+    void player.play().catch(() => undefined);
+  }, [soundEnabled, soundUnlocked, started]);
+
+  useEffect(() => {
     if (!guideOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setGuideOpen(false);
@@ -2317,7 +2686,7 @@ export function DawnTowerGame() {
   if (!started) {
     const ready = loading >= 100;
     return (
-      <main className="launch-screen" aria-labelledby="launch-title">
+      <main className={launchLeaving ? "launch-screen is-leaving" : "launch-screen"} aria-labelledby="launch-title">
         <video
           className="launch-art"
           autoPlay
@@ -2330,6 +2699,18 @@ export function DawnTowerGame() {
         >
           <source src="/assets/launch-background-pingpong.mp4" type="video/mp4" />
         </video>
+        <audio ref={launchAudioRef} loop preload="auto" aria-hidden="true">
+          <source src="/assets/launch-original-with-music.mp4" type="audio/mp4" />
+        </audio>
+        <button
+          className={soundEnabled && soundUnlocked ? "launch-sound-toggle is-on" : "launch-sound-toggle"}
+          type="button"
+          aria-pressed={soundEnabled && soundUnlocked}
+          onClick={() => { void toggleSound(); }}
+        >
+          <SoundGlyph enabled={soundEnabled && soundUnlocked} />
+          {soundEnabled && soundUnlocked ? "音乐已开启" : "开启音乐"}
+        </button>
         <div className="launch-shade" aria-hidden="true" />
         {!ready && (
           <div className="launch-loader" role="status" aria-label={`正在载入游戏 ${loading}%`}>
@@ -2351,7 +2732,7 @@ export function DawnTowerGame() {
           <div className="launch-actions">
             {ready && (
               <>
-                <button className="launch-start" type="button" onClick={() => setStarted(true)}>
+                <button className="launch-start" type="button" disabled={launchLeaving} onClick={() => { void startGame(); }}>
                   <span className="launch-start-label">开始游戏</span>
                 </button>
                 <button
@@ -2359,7 +2740,7 @@ export function DawnTowerGame() {
                   type="button"
                   aria-haspopup="dialog"
                   aria-controls="launch-guide-dialog"
-                  onClick={() => setGuideOpen(true)}
+                  onClick={() => { audio.ui(); setGuideOpen(true); }}
                 >
                   故事及玩法说明
                 </button>
@@ -2387,7 +2768,7 @@ export function DawnTowerGame() {
                   <span>CHASING THE LIGHT</span>
                   <h2 id="launch-guide-title">故事及玩法说明</h2>
                 </div>
-                <button type="button" aria-label="关闭故事及玩法说明" onClick={() => setGuideOpen(false)}>
+                <button type="button" aria-label="关闭故事及玩法说明" onClick={() => { audio.ui(); setGuideOpen(false); }}>
                   ×
                 </button>
               </header>
@@ -2423,7 +2804,7 @@ export function DawnTowerGame() {
               </div>
 
               <footer>
-                <button type="button" onClick={() => setGuideOpen(false)}>我明白了</button>
+                <button type="button" onClick={() => { audio.ui(); setGuideOpen(false); }}>我明白了</button>
               </footer>
             </section>
           </div>
@@ -2433,9 +2814,19 @@ export function DawnTowerGame() {
   }
 
   return (
-    <main className="game-app minimal-game">
+    <main className="game-app minimal-game is-entering">
       <h1 className="sr-only">追.光</h1>
-      <GameStage key={level.id} level={level} onExit={() => setStarted(false)} />
+      <GameStage
+        key={level.id}
+        level={level}
+        audio={audio}
+        soundEnabled={soundEnabled}
+        onSoundToggle={() => { void toggleSound(); }}
+        onExit={() => {
+          audio.stopGameplay();
+          setStarted(false);
+        }}
+      />
     </main>
   );
 }
