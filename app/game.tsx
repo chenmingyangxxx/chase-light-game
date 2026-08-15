@@ -50,7 +50,10 @@ const RECOVERY_Y = BASE_Y + 113;
 // composited, avoiding a visible seam at the top of the scene.
 const BACKDROP_SKY_TOP = 410;
 const BACKDROP_BOTTOM = BASE_Y + 149;
-const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 84;
+// Keep the physical floor close to the lower edge of the build viewport. The
+// former 84 px world-space margin made placed props appear to hover above the
+// foreground road in wide layouts.
+const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 24;
 const MIN_CAMERA_OFFSET = VIEW_GROUND_CAMERA - 20;
 // At maximum ascent the crane arm, basket, flower and tower crown all remain
 // inside the portrait viewport instead of being clipped above its top edge.
@@ -1664,14 +1667,17 @@ class TowerPhysicsGame {
     const ctx = this.context;
     const areaWidth = this.viewportWorldWidth;
     const areaHeight = BACKDROP_BOTTOM - BACKDROP_SKY_TOP;
-    // The complete new painting reaches the top of the highest camera view.
-    // Cover cropping preserves its aspect ratio: wide screens reveal more of
-    // the authored sides, while narrow screens crop those quiet outer areas.
+    // Portrait screens still use cover cropping. On desktop, map a wider field
+    // of view into the same world so the refinery remains background scale
+    // instead of competing with the real-size draggable props.
     const sourceAspect = image.naturalWidth / image.naturalHeight;
     const areaAspect = areaWidth / areaHeight;
     let renderedWidth = areaWidth;
     let renderedHeight = areaWidth / sourceAspect;
-    if (areaAspect < sourceAspect) {
+    if (areaWidth >= WORLD_WIDTH * 1.3) {
+      renderedHeight = Math.max(WORLD_HEIGHT + 120, (areaWidth * 1.06) / sourceAspect);
+      renderedWidth = renderedHeight * sourceAspect;
+    } else if (areaAspect < sourceAspect) {
       renderedHeight = areaHeight;
       renderedWidth = areaHeight * sourceAspect;
     }
