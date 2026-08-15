@@ -156,22 +156,22 @@ const ITEM_ART: Record<ItemId, ArtSprite> = {
   // Bounds are measured against the current v2 orthographic atlases. Some
   // generated cutouts cross their nominal grid cells (notably the bicycle),
   // so values may legitimately extend beyond 1.0 instead of clipping wheels.
-  pallet: { asset: "junk-sprite-atlas.png", column: 0, row: 0, columns: 4, rows: 4, visibleBounds: [0.07, 0.16, 0.93, 0.94] },
-  slab: { asset: "junk-sprite-atlas.png", column: 1, row: 0, columns: 4, rows: 4, visibleBounds: [0.065, 0.15, 0.94, 0.93] },
-  container: { asset: "junk-sprite-atlas.png", column: 2, row: 0, columns: 4, rows: 4, visibleBounds: [0.065, 0.075, 0.9, 0.985] },
-  car: { asset: "junk-sprite-atlas.png", column: 3, row: 0, columns: 4, rows: 4, visibleBounds: [0, 0.41, 0.96, 0.91] },
-  cabinet: { asset: "junk-sprite-atlas.png", column: 0, row: 1, columns: 4, rows: 4, visibleBounds: [0.25, 0.015, 0.72, 0.995] },
-  sofa: { asset: "junk-sprite-atlas.png", column: 1, row: 1, columns: 4, rows: 4, visibleBounds: [0.02, 0.275, 0.97, 0.84] },
-  beam: { asset: "junk-sprite-atlas.png", column: 2, row: 1, columns: 4, rows: 4, visibleBounds: [0.035, 0.35, 0.975, 0.67] },
-  ladder: { asset: "junk-sprite-atlas.png", column: 3, row: 1, columns: 4, rows: 4, visibleBounds: [0.285, 0, 0.72, 1] },
-  pipes: { asset: "junk-sprite-atlas.png", column: 0, row: 2, columns: 4, rows: 4, visibleBounds: [0.035, 0.28, 0.98, 0.8] },
-  crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4, visibleBounds: [0.085, 0.145, 0.94, 0.86] },
-  fridge: { asset: "junk-sprite-atlas.png", column: 2, row: 2, columns: 4, rows: 4, visibleBounds: [0.235, 0.005, 0.765, 0.97] },
-  washer: { asset: "junk-sprite-atlas.png", column: 3, row: 2, columns: 4, rows: 4, visibleBounds: [0.15, 0.005, 0.82, 0.97] },
-  computer: { asset: "monitor", column: 0, row: 0, columns: 1, rows: 1, visibleBounds: [0.056, 0, 0.957, 0.985] },
-  scaffold: { asset: "junk-sprite-atlas.png", column: 1, row: 3, columns: 4, rows: 4, visibleBounds: [0.16, 0, 0.96, 0.9] },
-  barrel: { asset: "junk-sprite-atlas.png", column: 2, row: 3, columns: 4, rows: 4, visibleBounds: [0.27, 0.035, 0.81, 0.92] },
-  tire: { asset: "junk-sprite-atlas.png", column: 3, row: 3, columns: 4, rows: 4, visibleBounds: [0.19, 0.035, 0.87, 0.8] },
+  pallet: { asset: "junk-sprite-atlas.png", column: 0, row: 0, columns: 4, rows: 4, visibleBounds: [0.075, 0.17, 0.93, 0.925] },
+  slab: { asset: "junk-sprite-atlas.png", column: 1, row: 0, columns: 4, rows: 4, visibleBounds: [0.035, 0.165, 0.96, 0.93] },
+  container: { asset: "junk-sprite-atlas.png", column: 2, row: 0, columns: 4, rows: 4, visibleBounds: [0.07, 0.08, 0.905, 0.98] },
+  car: { asset: "junk-sprite-atlas.png", column: 3, row: 0, columns: 4, rows: 4, visibleBounds: [0, 0.41, 0.955, 0.78] },
+  cabinet: { asset: "junk-sprite-atlas.png", column: 0, row: 1, columns: 4, rows: 4, visibleBounds: [0.25, 0.015, 0.74, 1] },
+  sofa: { asset: "junk-sprite-atlas.png", column: 1, row: 1, columns: 4, rows: 4, visibleBounds: [0.02, 0.28, 0.97, 0.835] },
+  beam: { asset: "junk-sprite-atlas.png", column: 2, row: 1, columns: 4, rows: 4, visibleBounds: [0.04, 0.36, 0.965, 0.655] },
+  ladder: { asset: "junk-sprite-atlas.png", column: 3, row: 1, columns: 4, rows: 4, visibleBounds: [0.29, 0, 0.685, 1] },
+  pipes: { asset: "junk-sprite-atlas.png", column: 0, row: 2, columns: 4, rows: 4, visibleBounds: [0.035, 0.28, 0.985, 0.8] },
+  crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4, visibleBounds: [0.085, 0.15, 0.935, 1] },
+  fridge: { asset: "junk-sprite-atlas.png", column: 2, row: 2, columns: 4, rows: 4, visibleBounds: [0.235, 0.005, 0.755, 0.96] },
+  washer: { asset: "junk-sprite-atlas.png", column: 3, row: 2, columns: 4, rows: 4, visibleBounds: [0.155, 0.04, 0.82, 0.95] },
+  computer: { asset: "monitor", column: 0, row: 0, columns: 1, rows: 1, visibleBounds: [0.075, 0.02, 0.925, 0.975] },
+  scaffold: { asset: "junk-sprite-atlas.png", column: 1, row: 3, columns: 4, rows: 4, visibleBounds: [0.125, 0, 0.91, 0.925] },
+  barrel: { asset: "junk-sprite-atlas.png", column: 2, row: 3, columns: 4, rows: 4, visibleBounds: [0.23, 0.015, 0.77, 0.915] },
+  tire: { asset: "junk-sprite-atlas.png", column: 3, row: 3, columns: 4, rows: 4, visibleBounds: [0.085, 0.04, 0.89, 0.86] },
   bicycle: { asset: "risky-props.png", column: 0, row: 0, columns: 2, rows: 1, visibleBounds: [0.015, 0.08, 1.33, 0.9] },
   chair: { asset: "risky-props.png", column: 1, row: 0, columns: 2, rows: 1, visibleBounds: [0.38, 0.075, 0.96, 0.94] },
 };
@@ -367,8 +367,8 @@ class TowerPhysicsGame {
     this.inventory = inventoryFor(level);
     this.engine = this.createEngine();
     this.artwork = {
-      polluted: this.loadArtwork("/assets/wasteland-master-polluted-distant-hd-v4.png"),
-      revived: this.loadArtwork("/assets/wasteland-master-revived-distant-hd-v4.png"),
+      polluted: this.loadArtwork("/assets/wasteland-master-polluted-urban-hd-v5.png"),
+      revived: this.loadArtwork("/assets/wasteland-master-revived-urban-hd-v5.png"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
       junk: this.loadArtwork("/assets/front-prop-atlas-v2.png"),
@@ -701,11 +701,9 @@ class TowerPhysicsGame {
       ? Bodies.circle(x, y, item.width / 2, options)
       : Bodies.rectangle(x, y, item.width, item.height, options)) as TaggedBody;
     Body.setAngle(body, angle);
-    const centreHeightBias = item.role === "tall" ? -item.height * 0.12
-      : item.role === "risky" ? -item.height * 0.08
-        : item.role === "foundation" ? item.height * 0.035
-          : 0;
-    if (centreHeightBias !== 0) Body.setCentre(body, { x: 0, y: centreHeightBias }, true);
+    // Keep the visual centre and collision centre identical. Shifting Matter's
+    // centre without compensating the sprite made physically touching pieces
+    // look suspended or overlapping, especially tall appliances.
     if (item.role === "tall" || item.role === "risky") Body.setInertia(body, body.inertia * 0.8);
     body.gameItem = item;
     body.gameBornAt = this.elapsed;
@@ -969,7 +967,7 @@ class TowerPhysicsGame {
     this.context.save();
     this.context.translate(0, this.cameraOffsetY);
     this.drawScene(illuminate);
-    this.drawWorld(illuminate);
+    this.drawWorld();
     this.context.restore();
   }
 
@@ -1316,14 +1314,14 @@ class TowerPhysicsGame {
     ctx.restore();
   }
 
-  private drawWorld(illuminate: number) {
-    const ctx = this.context;
+  private drawWorld() {
     this.dynamicBodies.forEach((body) => this.drawItem(body));
     if (this.held) this.drawGhost(this.held);
 
     if (this.status === "activating" || this.status === "cleared") {
-      ctx.fillStyle = `rgba(255, 240, 166, ${0.12 + illuminate * 0.18})`;
-      ctx.fillRect(0, BACKDROP_TOP, WORLD_WIDTH, BACKDROP_BOTTOM - BACKDROP_TOP);
+      // The scene itself cross-fades from polluted to revived. A previous
+      // fixed-width yellow wash exposed hard vertical edges on wide screens
+      // and made the transition feel artificial, so the colour block is gone.
       this.drawSuccessRobot();
     }
   }
@@ -1629,7 +1627,7 @@ class TowerPhysicsGame {
     // square atlas cell. A very small vertical overlap covers Matter's normal
     // contact slop, so two pieces that are physically touching also look
     // seamless rather than leaving a distracting transparent gap.
-    const seamBleed = Math.min(1.5, Math.max(0.8, item.height * 0.08));
+    const seamBleed = Math.min(1, Math.max(0.55, item.height * 0.012));
     const ctx = this.context;
     const previousAlpha = ctx.globalAlpha;
     const previousFilter = ctx.filter;
