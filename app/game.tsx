@@ -347,6 +347,8 @@ class TowerPhysicsGame {
   private frameId = 0;
   private cameraOffsetY = VIEW_GROUND_CAMERA;
   private cameraManualOffsetY = 0;
+  private viewportWorldWidth = WORLD_WIDTH;
+  private viewportWorldLeft = 0;
   private panning: { pointerId: number; lastClientY: number } | null = null;
   private baseBody: Matter.Body | null = null;
   private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris" | "goal" | "monitor", HTMLImageElement>;
@@ -362,8 +364,8 @@ class TowerPhysicsGame {
     this.inventory = inventoryFor(level);
     this.engine = this.createEngine();
     this.artwork = {
-      polluted: this.loadArtwork("/assets/wasteland-flat-polluted.png"),
-      revived: this.loadArtwork("/assets/wasteland-flat-revived.png"),
+      polluted: this.loadArtwork("/assets/wasteland-responsive-polluted-v2.png"),
+      revived: this.loadArtwork("/assets/wasteland-responsive-revived-v2.png"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
       junk: this.loadArtwork("/assets/front-prop-atlas-v2.png"),
@@ -861,7 +863,7 @@ class TowerPhysicsGame {
   private clientToWorld(clientX: number, clientY: number) {
     const rect = this.canvas.getBoundingClientRect();
     return {
-      x: ((clientX - rect.left) / Math.max(1, rect.width)) * WORLD_WIDTH,
+      x: this.viewportWorldLeft + ((clientX - rect.left) / Math.max(1, rect.width)) * this.viewportWorldWidth,
       y: ((clientY - rect.top) / Math.max(1, rect.height)) * WORLD_HEIGHT - this.cameraOffsetY,
     };
   }
@@ -906,11 +908,15 @@ class TowerPhysicsGame {
       this.canvas.width = pixelWidth;
       this.canvas.height = pixelHeight;
     }
-    const scaleX = rect.width / WORLD_WIDTH;
-    const scaleY = rect.height / WORLD_HEIGHT;
+    // Use one uniform scene scale at every aspect ratio. The phone viewport
+    // keeps the original 720 x 1000 framing; wider desktop windows reveal
+    // more of the environment instead of stretching the front-facing props.
+    const scale = rect.height / WORLD_HEIGHT;
+    this.viewportWorldWidth = rect.width / Math.max(scale, 0.001);
+    this.viewportWorldLeft = BASE_X - this.viewportWorldWidth / 2;
     this.context.setTransform(1, 0, 0, 1, 0, 0);
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this.context.setTransform(dpr * scaleX, 0, 0, dpr * scaleY, 0, 0);
+    this.context.setTransform(dpr * scale, 0, 0, dpr * scale, -this.viewportWorldLeft * dpr * scale, 0);
     this.updateCamera();
 
     const activating = this.status === "activating" || this.status === "cleared";
@@ -947,7 +953,7 @@ class TowerPhysicsGame {
     const backdropHeight = BACKDROP_BOTTOM - BACKDROP_TOP;
 
     ctx.fillStyle = "#101b1d";
-    ctx.fillRect(0, backdropTop, WORLD_WIDTH, backdropHeight);
+    ctx.fillRect(this.viewportWorldLeft, backdropTop, this.viewportWorldWidth, backdropHeight);
     if (this.imageReady(polluted)) {
       ctx.globalAlpha = 0.96;
       this.drawLongBackdrop(polluted);
@@ -963,13 +969,13 @@ class TowerPhysicsGame {
     }
 
     ctx.fillStyle = `rgba(5, 13, 15, ${0.22 - illuminate * 0.14})`;
-    ctx.fillRect(0, backdropTop, WORLD_WIDTH, backdropHeight);
+    ctx.fillRect(this.viewportWorldLeft, backdropTop, this.viewportWorldWidth, backdropHeight);
 
     if (this.imageReady(this.artwork.debris)) {
       ctx.save();
       ctx.globalAlpha = 0.94 - illuminate * 0.2;
       // Keep the ruin strip grounded instead of floating in the build space.
-      ctx.drawImage(this.artwork.debris, 0, BASE_Y - 204, WORLD_WIDTH, BACKDROP_BOTTOM - (BASE_Y - 204));
+      ctx.drawImage(this.artwork.debris, this.viewportWorldLeft, BASE_Y - 204, this.viewportWorldWidth, BACKDROP_BOTTOM - (BASE_Y - 204));
       ctx.restore();
     }
     this.drawGoalRig(this.activationProgress());
@@ -979,11 +985,27 @@ class TowerPhysicsGame {
 
   private drawLongBackdrop(image: HTMLImageElement) {
     const ctx = this.context;
-    const nativeHeight = image.naturalHeight * (WORLD_WIDTH / image.naturalWidth);
-    const renderedHeight = Math.max(nativeHeight, BACKDROP_BOTTOM - BACKDROP_TOP);
-    // Align the background to the very bottom of the camera world so no dark
-    // unused seam opens underneath the physical ground and steel platform.
-    ctx.drawImage(image, 0, BACKDROP_BOTTOM - renderedHeight, WORLD_WIDTH, renderedHeight);
+    const areaWidth = this.viewportWorldWidth;
+    const areaHeight = BACKDROP_BOTTOM - BACKDROP_TOP;
+    const sourceAspect = image.naturalWidth / image.naturalHeight;
+    const areaAspect = areaWidth / areaHeight;
+    let renderedWidth = areaWidth;
+    let renderedHeight = areaWidth / sourceAspect;
+    if (areaAspect < sourceAspect) {
+      renderedHeight = areaHeight;
+      renderedWidth = areaHeight * sourceAspect;
+    }
+    // Cover the complete responsive viewport without deforming the artwork.
+    // Ground remains pinned to the physical floor while excess width/height
+    // is safely cropped at the quiet edges of the generated composition.
+    const renderedX = BASE_X - renderedWidth / 2;
+    const renderedY = BACKDROP_BOTTOM - renderedHeight;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(this.viewportWorldLeft, BACKDROP_TOP, areaWidth, areaHeight);
+    ctx.clip();
+    ctx.drawImage(image, renderedX, renderedY, renderedWidth, renderedHeight);
+    ctx.restore();
   }
 
   private drawFallbackSky(illuminate: number) {
@@ -993,7 +1015,7 @@ class TowerPhysicsGame {
     sky.addColorStop(0.62, colorMix([47, 63, 60], [201, 227, 192], illuminate));
     sky.addColorStop(1, colorMix([67, 71, 63], [111, 166, 97], illuminate));
     ctx.fillStyle = sky;
-    ctx.fillRect(0, BACKDROP_TOP, WORLD_WIDTH, BACKDROP_BOTTOM - BACKDROP_TOP);
+    ctx.fillRect(this.viewportWorldLeft, BACKDROP_TOP, this.viewportWorldWidth, BACKDROP_BOTTOM - BACKDROP_TOP);
   }
 
   private drawGrowth(illuminate: number, now: number) {
@@ -1033,12 +1055,12 @@ class TowerPhysicsGame {
     ctx.lineWidth = 13;
     ctx.lineCap = "square";
     ctx.beginPath();
-    ctx.moveTo(-30, boomY);
+    ctx.moveTo(this.viewportWorldLeft - 30, boomY);
     ctx.lineTo(basketX + 4, boomY);
     ctx.stroke();
     ctx.strokeStyle = "rgba(102, 106, 92, 0.52)";
     ctx.lineWidth = 2;
-    for (let x = 18; x < basketX - 24; x += 62) {
+    for (let x = this.viewportWorldLeft + 18; x < basketX - 24; x += 62) {
       ctx.beginPath();
       ctx.moveTo(x, boomY + 7);
       ctx.lineTo(x + 32, boomY + 37);
@@ -1547,12 +1569,16 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width:
 
 interface GameStageProps {
   level: LevelConfig;
+  onExit: () => void;
 }
 
-function GameStage({ level }: GameStageProps) {
+type ConfirmationAction = "reset" | "exit" | null;
+
+function GameStage({ level, onExit }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<TowerPhysicsGame | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
+  const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1565,6 +1591,15 @@ function GameStage({ level }: GameStageProps) {
       gameRef.current = null;
     };
   }, [level]);
+
+  useEffect(() => {
+    if (!confirmation) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConfirmation(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [confirmation]);
 
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
@@ -1588,7 +1623,12 @@ function GameStage({ level }: GameStageProps) {
               gameRef.current?.panCamera(event.deltaY);
             }}
           />
-          {isInteractive && <button className="reset-action" type="button" aria-label="重置本关" onClick={() => gameRef.current?.restart()}>重置</button>}
+          {isInteractive && (
+            <div className="stage-actions" aria-label="游戏操作">
+              <button className="stage-action reset-action" type="button" onClick={() => setConfirmation("reset")}>重置</button>
+              <button className="stage-action exit-action" type="button" onClick={() => setConfirmation("exit")}>退出</button>
+            </div>
+          )}
           {snapshot.status === "activating" && (
             <div className="activation-strip" aria-live="polite">
               <span>地表复苏中</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
@@ -1631,12 +1671,49 @@ function GameStage({ level }: GameStageProps) {
             </div>
           </aside>
           {(snapshot.status === "cleared" || snapshot.status === "failed") && (
-            <div className={`result-overlay ${snapshot.status}`}>
-              <div className="result-symbol">{snapshot.status === "cleared" ? "✦" : "↯"}</div>
-              <strong>{snapshot.status === "cleared" ? "抵达新芽" : "堆叠失败"}</strong>
-              <p>{snapshot.status === "cleared" ? "99 米处的生命正在复苏。" : "物件必须连续堆在上一件物品上。"}</p>
-              {snapshot.status === "cleared" && <button className="primary-action" onClick={() => gameRef.current?.restart()}>再次挑战</button>}
-              {snapshot.status === "failed" && <button className="primary-action" onClick={() => gameRef.current?.restart()}>重新搭建</button>}
+            <div className="modal-scrim result-scrim">
+              <div className={`secondary-dialog result-dialog ${snapshot.status}`} role="alertdialog" aria-modal="true" aria-labelledby="result-title">
+                <div className="result-symbol" aria-hidden="true">{snapshot.status === "cleared" ? "✦" : "↯"}</div>
+                <strong id="result-title">{snapshot.status === "cleared" ? "抵达新芽" : "堆叠失败"}</strong>
+                <p>{snapshot.status === "cleared" ? "99 米处的生命正在复苏。" : "物件必须连续堆在上一件物品上。"}</p>
+                <div className="dialog-actions single-action">
+                  <button className="dialog-button primary" type="button" onClick={() => {
+                    setConfirmation(null);
+                    gameRef.current?.restart();
+                  }}>
+                    {snapshot.status === "cleared" ? "再次挑战" : "重新搭建"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {confirmation && isInteractive && (
+            <div className="modal-scrim confirmation-scrim" onPointerDown={() => setConfirmation(null)}>
+              <div
+                className="secondary-dialog confirmation-dialog"
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="confirmation-title"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="dialog-kicker">操作确认</span>
+                <strong id="confirmation-title">{confirmation === "reset" ? "重新搭建？" : "退出游戏？"}</strong>
+                <p>{confirmation === "reset" ? "当前堆叠进度将被清空。" : "将返回游戏启动页面。"}</p>
+                <div className="dialog-actions">
+                  <button className="dialog-button ghost" type="button" onClick={() => setConfirmation(null)}>取消</button>
+                  <button
+                    className="dialog-button primary"
+                    type="button"
+                    onClick={() => {
+                      setConfirmation(null);
+                      if (confirmation === "reset") gameRef.current?.restart();
+                      else onExit();
+                    }}
+                  >
+                    {confirmation === "reset" ? "确认重置" : "确认退出"}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -1690,9 +1767,7 @@ export function DawnTowerGame() {
           <div className="launch-actions">
             {ready && (
               <button className="launch-start" type="button" onClick={() => setStarted(true)}>
-                <span className="launch-start-mark" aria-hidden="true">✦</span>
                 <span className="launch-start-label">开始游戏</span>
-                <span className="launch-start-mark" aria-hidden="true">✦</span>
               </button>
             )}
           </div>
@@ -1704,7 +1779,7 @@ export function DawnTowerGame() {
   return (
     <main className="game-app minimal-game">
       <h1 className="sr-only">追.光</h1>
-      <GameStage key={level.id} level={level} />
+      <GameStage key={level.id} level={level} onExit={() => setStarted(false)} />
     </main>
   );
 }
