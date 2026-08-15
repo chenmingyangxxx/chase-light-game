@@ -149,24 +149,27 @@ interface GameSnapshot {
 }
 
 const ITEM_ART: Record<ItemId, ArtSprite> = {
-  pallet: { asset: "junk-sprite-atlas.png", column: 0, row: 0, columns: 4, rows: 4, visibleBounds: [0.077, 0.179, 0.922, 0.919] },
-  slab: { asset: "junk-sprite-atlas.png", column: 1, row: 0, columns: 4, rows: 4, visibleBounds: [0.032, 0.169, 0.951, 0.925] },
-  container: { asset: "junk-sprite-atlas.png", column: 2, row: 0, columns: 4, rows: 4, visibleBounds: [0.070, 0.083, 0.998, 0.976] },
-  car: { asset: "junk-sprite-atlas.png", column: 3, row: 0, columns: 4, rows: 4, visibleBounds: [0, 0.415, 0.947, 0.769] },
-  cabinet: { asset: "junk-sprite-atlas.png", column: 0, row: 1, columns: 4, rows: 4, visibleBounds: [0.255, 0.016, 0.730, 0.992] },
-  sofa: { asset: "junk-sprite-atlas.png", column: 1, row: 1, columns: 4, rows: 4, visibleBounds: [0.019, 0.277, 0.963, 0.826] },
-  beam: { asset: "junk-sprite-atlas.png", column: 2, row: 1, columns: 4, rows: 4, visibleBounds: [0.041, 0.361, 0.957, 0.647] },
-  ladder: { asset: "junk-sprite-atlas.png", column: 3, row: 1, columns: 4, rows: 4, visibleBounds: [0.290, 0, 0.676, 0.992] },
-  pipes: { asset: "junk-sprite-atlas.png", column: 0, row: 2, columns: 4, rows: 4, visibleBounds: [0.041, 0.284, 0.979, 0.794] },
-  crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4, visibleBounds: [0.089, 0.153, 0.928, 0.998] },
-  fridge: { asset: "junk-sprite-atlas.png", column: 2, row: 2, columns: 4, rows: 4, visibleBounds: [0.239, 0.013, 0.746, 0.950] },
-  washer: { asset: "junk-sprite-atlas.png", column: 3, row: 2, columns: 4, rows: 4, visibleBounds: [0.159, 0.045, 0.810, 0.938] },
-  computer: { asset: "monitor", column: 0, row: 0, columns: 1, rows: 1, visibleBounds: [0.079, 0.026, 0.921, 0.973] },
-  scaffold: { asset: "junk-sprite-atlas.png", column: 1, row: 3, columns: 4, rows: 4, visibleBounds: [0.131, 0, 0.899, 0.919] },
-  barrel: { asset: "junk-sprite-atlas.png", column: 2, row: 3, columns: 4, rows: 4, visibleBounds: [0.230, 0.013, 0.759, 0.909] },
-  tire: { asset: "junk-sprite-atlas.png", column: 3, row: 3, columns: 4, rows: 4, visibleBounds: [0.089, 0.045, 0.880, 0.852] },
-  bicycle: { asset: "risky-props.png", column: 0, row: 0, columns: 2, rows: 1, visibleBounds: [0.025, 0.088, 1, 0.883] },
-  chair: { asset: "risky-props.png", column: 1, row: 0, columns: 2, rows: 1, visibleBounds: [0, 0.082, 0.944, 0.929] },
+  // Bounds are measured against the current v2 orthographic atlases. Some
+  // generated cutouts cross their nominal grid cells (notably the bicycle),
+  // so values may legitimately extend beyond 1.0 instead of clipping wheels.
+  pallet: { asset: "junk-sprite-atlas.png", column: 0, row: 0, columns: 4, rows: 4, visibleBounds: [0.07, 0.16, 0.93, 0.94] },
+  slab: { asset: "junk-sprite-atlas.png", column: 1, row: 0, columns: 4, rows: 4, visibleBounds: [0.065, 0.15, 0.94, 0.93] },
+  container: { asset: "junk-sprite-atlas.png", column: 2, row: 0, columns: 4, rows: 4, visibleBounds: [0.065, 0.075, 0.9, 0.985] },
+  car: { asset: "junk-sprite-atlas.png", column: 3, row: 0, columns: 4, rows: 4, visibleBounds: [0, 0.41, 0.96, 0.91] },
+  cabinet: { asset: "junk-sprite-atlas.png", column: 0, row: 1, columns: 4, rows: 4, visibleBounds: [0.25, 0.015, 0.72, 0.995] },
+  sofa: { asset: "junk-sprite-atlas.png", column: 1, row: 1, columns: 4, rows: 4, visibleBounds: [0.02, 0.275, 0.97, 0.84] },
+  beam: { asset: "junk-sprite-atlas.png", column: 2, row: 1, columns: 4, rows: 4, visibleBounds: [0.035, 0.35, 0.975, 0.67] },
+  ladder: { asset: "junk-sprite-atlas.png", column: 3, row: 1, columns: 4, rows: 4, visibleBounds: [0.285, 0, 0.72, 1] },
+  pipes: { asset: "junk-sprite-atlas.png", column: 0, row: 2, columns: 4, rows: 4, visibleBounds: [0.035, 0.28, 0.98, 0.8] },
+  crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4, visibleBounds: [0.085, 0.145, 0.94, 0.86] },
+  fridge: { asset: "junk-sprite-atlas.png", column: 2, row: 2, columns: 4, rows: 4, visibleBounds: [0.235, 0.005, 0.765, 0.97] },
+  washer: { asset: "junk-sprite-atlas.png", column: 3, row: 2, columns: 4, rows: 4, visibleBounds: [0.15, 0.005, 0.82, 0.97] },
+  computer: { asset: "monitor", column: 0, row: 0, columns: 1, rows: 1, visibleBounds: [0.056, 0, 0.957, 0.985] },
+  scaffold: { asset: "junk-sprite-atlas.png", column: 1, row: 3, columns: 4, rows: 4, visibleBounds: [0.16, 0, 0.96, 0.9] },
+  barrel: { asset: "junk-sprite-atlas.png", column: 2, row: 3, columns: 4, rows: 4, visibleBounds: [0.27, 0.035, 0.81, 0.92] },
+  tire: { asset: "junk-sprite-atlas.png", column: 3, row: 3, columns: 4, rows: 4, visibleBounds: [0.19, 0.035, 0.87, 0.8] },
+  bicycle: { asset: "risky-props.png", column: 0, row: 0, columns: 2, rows: 1, visibleBounds: [0.015, 0.08, 1.33, 0.9] },
+  chair: { asset: "risky-props.png", column: 1, row: 0, columns: 2, rows: 1, visibleBounds: [0.38, 0.075, 0.96, 0.94] },
 };
 
 const ITEM_ICON_ART: Record<ItemId, IconSprite> = {
@@ -192,87 +195,83 @@ const ITEM_ICON_ART: Record<ItemId, IconSprite> = {
 
 const ITEMS: Record<ItemId, ItemDefinition> = {
   pallet: {
-    id: "pallet", name: "木托盘", shortName: "托", role: "foundation", shape: "box", width: 108, height: 92,
+    id: "pallet", name: "木托盘", shortName: "托", role: "foundation", shape: "box", width: 60, height: 48,
     density: 0.0022, friction: 0.88, frictionStatic: 1.05, restitution: 0.01, color: "#9b6b45", accent: "#d3a271", trait: "宽 · 稳",
   },
   slab: {
-    id: "slab", name: "混凝土板", shortName: "板", role: "foundation", shape: "box", width: 120, height: 104,
+    id: "slab", name: "混凝土板", shortName: "板", role: "foundation", shape: "box", width: 64, height: 52,
     density: 0.0044, friction: 0.94, frictionStatic: 1.2, restitution: 0.005, color: "#66747a", accent: "#9ba9a9", trait: "极重 · 防滑",
   },
   container: {
-    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 145, height: 118,
+    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 68, height: 72,
     density: 0.0033, friction: 0.78, frictionStatic: 0.96, restitution: 0.01, color: "#536f74", accent: "#a2b8a7", trait: "重 · 可堆高",
   },
   car: {
-    id: "car", name: "报废车壳", shortName: "车", role: "foundation", shape: "box", width: 148, height: 64,
+    id: "car", name: "报废车壳", shortName: "车", role: "foundation", shape: "box", width: 122, height: 52,
     density: 0.0048, friction: 0.74, frictionStatic: 0.9, restitution: 0.02, color: "#785751", accent: "#c18c68", trait: "宽 · 压重",
   },
   cabinet: {
-    id: "cabinet", name: "铁皮柜", shortName: "柜", role: "tall", shape: "box", width: 47, height: 84,
+    id: "cabinet", name: "铁皮柜", shortName: "柜", role: "tall", shape: "box", width: 38, height: 76,
     density: 0.0031, friction: 0.73, frictionStatic: 0.9, restitution: 0.02, color: "#6c7c65", accent: "#b9c697", trait: "高 · 偏重",
   },
   sofa: {
-    id: "sofa", name: "旧沙发", shortName: "沙", role: "foundation", shape: "box", width: 116, height: 70,
+    id: "sofa", name: "旧沙发", shortName: "沙", role: "foundation", shape: "box", width: 84, height: 50,
     density: 0.0028, friction: 0.85, frictionStatic: 1.05, restitution: 0.02, color: "#75554c", accent: "#ca9880", trait: "宽 · 高摩擦",
   },
   beam: {
-    id: "beam", name: "废旧钢梁", shortName: "梁", role: "bridge", shape: "box", width: 178, height: 49,
+    id: "beam", name: "废旧钢梁", shortName: "梁", role: "bridge", shape: "box", width: 124, height: 34,
     density: 0.0032, friction: 0.8, frictionStatic: 0.98, restitution: 0.01, color: "#7e8382", accent: "#d1c9a8", trait: "长 · 可桥接",
   },
   ladder: {
-    id: "ladder", name: "金属梯", shortName: "梯", role: "tall", shape: "box", width: 44, height: 136,
+    id: "ladder", name: "金属梯", shortName: "梯", role: "tall", shape: "box", width: 32, height: 120,
     density: 0.0019, friction: 0.63, frictionStatic: 0.75, restitution: 0.03, color: "#8b9d87", accent: "#d6dfba", trait: "轻 · 易翘",
   },
   pipes: {
-    id: "pipes", name: "管束", shortName: "管", role: "bridge", shape: "box", width: 128, height: 62,
+    id: "pipes", name: "管束", shortName: "管", role: "bridge", shape: "box", width: 100, height: 50,
     density: 0.0029, friction: 0.58, frictionStatic: 0.7, restitution: 0.04, color: "#647a82", accent: "#b1c2c6", trait: "长 · 易滑",
   },
   crate: {
-    id: "crate", name: "回收箱", shortName: "箱", role: "block", shape: "box", width: 60, height: 47,
+    id: "crate", name: "回收箱", shortName: "箱", role: "block", shape: "box", width: 50, height: 40,
     density: 0.0025, friction: 0.81, frictionStatic: 0.98, restitution: 0.015, color: "#b7784f", accent: "#e2ae70", trait: "规则 · 易堆",
   },
   fridge: {
-    id: "fridge", name: "旧冰箱", shortName: "冰", role: "tall", shape: "box", width: 46, height: 82,
+    id: "fridge", name: "旧冰箱", shortName: "冰", role: "tall", shape: "box", width: 38, height: 70,
     density: 0.0038, friction: 0.74, frictionStatic: 0.88, restitution: 0.01, color: "#7790a0", accent: "#d6e0d5", trait: "高 · 可封顶",
   },
   washer: {
-    id: "washer", name: "洗衣机", shortName: "洗", role: "block", shape: "box", width: 60, height: 68,
+    id: "washer", name: "洗衣机", shortName: "洗", role: "block", shape: "box", width: 38, height: 52,
     density: 0.0034, friction: 0.76, frictionStatic: 0.93, restitution: 0.01, color: "#8e9e9a", accent: "#cbd6cd", trait: "方正 · 压重",
   },
   computer: {
-    id: "computer", name: "破旧显示器", shortName: "屏", role: "block", shape: "box", width: 74, height: 55,
+    id: "computer", name: "破旧显示器", shortName: "屏", role: "block", shape: "box", width: 48, height: 38,
     density: 0.0018, friction: 0.64, frictionStatic: 0.74, restitution: 0.04, color: "#57636b", accent: "#9daeb5", trait: "宽 · 填缝",
   },
   scaffold: {
-    id: "scaffold", name: "脚手架", shortName: "架", role: "tall", shape: "box", width: 68, height: 108,
+    id: "scaffold", name: "脚手架", shortName: "架", role: "tall", shape: "box", width: 54, height: 78,
     density: 0.0022, friction: 0.68, frictionStatic: 0.81, restitution: 0.02, color: "#76866c", accent: "#d6cc88", trait: "很高 · 须居中",
   },
   barrel: {
-    id: "barrel", name: "旧油桶", shortName: "桶", role: "risky", shape: "box", width: 50, height: 70,
+    id: "barrel", name: "旧油桶", shortName: "桶", role: "risky", shape: "box", width: 38, height: 56,
     density: 0.0024, friction: 0.48, frictionStatic: 0.58, restitution: 0.07, color: "#a37445", accent: "#edc161", trait: "高 · 易倒",
   },
   tire: {
-    id: "tire", name: "轮胎", shortName: "胎", role: "risky", shape: "circle", width: 46, height: 46,
+    id: "tire", name: "轮胎", shortName: "胎", role: "risky", shape: "circle", width: 44, height: 44,
     density: 0.0027, friction: 0.54, frictionStatic: 0.68, restitution: 0.2, color: "#333b3a", accent: "#9fa78c", trait: "弹性 · 可配重",
   },
   bicycle: {
-    id: "bicycle", name: "旧自行车", shortName: "车", role: "risky", shape: "box", width: 116, height: 60,
+    id: "bicycle", name: "旧自行车", shortName: "车", role: "risky", shape: "box", width: 92, height: 56,
     density: 0.0013, friction: 0.34, frictionStatic: 0.42, restitution: 0.08, color: "#6e7e5f", accent: "#d2b86a", trait: "轻 · 难稳定",
   },
   chair: {
-    id: "chair", name: "办公椅", shortName: "椅", role: "risky", shape: "box", width: 64, height: 100,
+    id: "chair", name: "办公椅", shortName: "椅", role: "risky", shape: "box", width: 44, height: 68,
     density: 0.0016, friction: 0.4, frictionStatic: 0.52, restitution: 0.05, color: "#745f56", accent: "#c5a477", trait: "偏心 · 易倒",
   },
 };
 
-// One world metre equals 12 pixels. Scale the real-world-inspired prop
-// dimensions down to that same scene measure, so a container or car no longer
-// reads as a large fraction of the entire 99 m climb.
-const PROP_SCALE = 0.38;
-Object.values(ITEMS).forEach((item) => {
-  item.width = Math.round(item.width * PROP_SCALE);
-  item.height = Math.round(item.height * PROP_SCALE);
-});
+// Final world-space sizes use one calibrated presentation scale. Ratios follow
+// familiar real objects (a car is about 1.8x a container door, a ladder is
+// markedly taller and narrower than a fridge), with only thin objects slightly
+// thickened so they remain comfortable to grab on a phone.
 
 const LEVELS: LevelConfig[] = [
   {
@@ -573,8 +572,9 @@ class TowerPhysicsGame {
     }
     if (!adjusted) return;
     const item = adjusted.body.gameItem;
+    const halfWidth = (item?.width ?? 40) / 2;
     const halfHeight = (item?.height ?? 40) / 2;
-    const x = clamp(point.x - adjusted.offsetX, 42, WORLD_WIDTH - 42);
+    const x = clamp(point.x - adjusted.offsetX, halfWidth + 3, WORLD_WIDTH - halfWidth - 3);
     const y = clamp(point.y - adjusted.offsetY, 52, BASE_Y - halfHeight);
     Body.setPosition(adjusted.body, { x, y });
     Body.setVelocity(adjusted.body, { x: 0, y: 0 });
