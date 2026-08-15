@@ -971,6 +971,11 @@ class TowerPhysicsGame {
     ctx.fillStyle = `rgba(5, 13, 15, ${0.22 - illuminate * 0.14})`;
     ctx.fillRect(this.viewportWorldLeft, backdropTop, this.viewportWorldWidth, backdropHeight);
 
+    // Sunlight exists only around the 99 m goal. From the ground this entire
+    // world-space band is above the viewport; it is revealed naturally as the
+    // player climbs and pans upward.
+    this.drawGoalSkylight(illuminate);
+
     if (this.imageReady(this.artwork.debris)) {
       ctx.save();
       ctx.globalAlpha = 0.94 - illuminate * 0.2;
@@ -981,6 +986,57 @@ class TowerPhysicsGame {
     this.drawGoalRig(this.activationProgress());
     this.drawGrowth(illuminate, this.elapsed);
 
+  }
+
+  private drawGoalSkylight(illuminate: number) {
+    const ctx = this.context;
+    const focusX = GOAL_BASKET_X;
+    const focusY = GOAL_BASKET_Y + 24;
+    const beamTopY = BACKDROP_TOP - 72;
+    const beamBottomY = focusY + 58;
+    const pulse = 0.92 + Math.sin(this.elapsed / 780) * 0.08;
+    const strength = (0.22 + illuminate * 0.2) * pulse;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+
+    const beam = ctx.createLinearGradient(0, beamTopY, 0, beamBottomY);
+    beam.addColorStop(0, "rgba(255, 249, 211, 0)");
+    beam.addColorStop(0.18, `rgba(255, 244, 194, ${strength * 0.42})`);
+    beam.addColorStop(0.76, `rgba(255, 224, 139, ${strength * 0.72})`);
+    beam.addColorStop(1, "rgba(255, 217, 122, 0)");
+    ctx.fillStyle = beam;
+    ctx.beginPath();
+    ctx.moveTo(focusX - 29, beamTopY);
+    ctx.lineTo(focusX + 29, beamTopY);
+    ctx.lineTo(focusX + 82, beamBottomY);
+    ctx.lineTo(focusX - 82, beamBottomY);
+    ctx.closePath();
+    ctx.fill();
+
+    const halo = ctx.createRadialGradient(focusX, focusY, 2, focusX, focusY, 76);
+    halo.addColorStop(0, `rgba(255, 245, 181, ${0.42 + illuminate * 0.2})`);
+    halo.addColorStop(0.34, `rgba(238, 229, 148, ${0.2 + illuminate * 0.12})`);
+    halo.addColorStop(1, "rgba(219, 229, 158, 0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(focusX, focusY, 76, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Deterministic drifting dust keeps the effect alive without allocating
+    // particles or introducing frame-rate-dependent simulation state.
+    for (let index = 0; index < 13; index += 1) {
+      const travel = ((this.elapsed * (0.012 + index * 0.0007) + index * 37) % 210) / 210;
+      const y = beamBottomY - travel * (beamBottomY - beamTopY);
+      const spread = 24 + (1 - travel) * 47;
+      const x = focusX + Math.sin(index * 4.13 + this.elapsed / 680) * spread;
+      const alpha = Math.sin(travel * Math.PI) * (0.18 + illuminate * 0.1);
+      ctx.fillStyle = `rgba(255, 242, 188, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(x, y, 0.8 + (index % 3) * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   private drawLongBackdrop(image: HTMLImageElement) {
