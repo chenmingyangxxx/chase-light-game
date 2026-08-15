@@ -1647,6 +1647,51 @@ function GameStage({ level }: GameStageProps) {
 
 export function DawnTowerGame() {
   const level = LEVELS[0];
+  const [loading, setLoading] = useState(8);
+  const [started, setStarted] = useState(false);
+
+  useEffect(() => {
+    if (started) return;
+    const timer = window.setInterval(() => {
+      setLoading((value) => {
+        if (value >= 100) {
+          window.clearInterval(timer);
+          return 100;
+        }
+        return Math.min(100, value + (value < 72 ? 8 : 4));
+      });
+    }, 90);
+    return () => window.clearInterval(timer);
+  }, [started]);
+
+  if (!started) {
+    const ready = loading >= 100;
+    return (
+      <main className="launch-screen" aria-labelledby="launch-title">
+        <div className="launch-art" aria-hidden="true" />
+        <div className="launch-shade" aria-hidden="true" />
+        <section className="launch-content">
+          <div className="launch-brand">
+            <img className="launch-emblem" src="/assets/ashes-to-aurora-emblem.png" alt="" />
+            <p className="launch-kicker">废墟之上 · 新芽未熄</p>
+            <h1 id="launch-title">余烬之光</h1>
+            <p className="launch-english">ASHES TO AURORA</p>
+            <p className="launch-tagline">堆叠废料，抵达 99 米的新生。</p>
+          </div>
+
+          <div className="launch-actions">
+            <div className="launch-progress-copy"><span>场景载入</span><b>{loading}%</b></div>
+            <div className="launch-progress" role="progressbar" aria-label="游戏加载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={loading}>
+              <i style={{ width: `${loading}%` }} />
+            </div>
+            <button className="launch-start" type="button" disabled={!ready} onClick={() => setStarted(true)}>
+              {ready ? "开始游戏" : "正在载入"}
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="game-app minimal-game">
