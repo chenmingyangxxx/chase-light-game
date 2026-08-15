@@ -1883,20 +1883,20 @@ class TowerPhysicsGame {
     // A long, slightly swaying rescue rope gives the suspended basket a clear
     // vertical connection that remains visible in the same phone viewport.
     const ropeStartY = basketY + 56;
-    const ropeEndY = basketY + 390;
+    const ropeEndY = basketY + 610;
     const ropeSway = Math.sin(this.elapsed / 760) * 5;
     ctx.lineCap = "round";
     ctx.strokeStyle = "rgba(29, 28, 23, 0.92)";
     ctx.lineWidth = 5.4;
     ctx.beginPath();
     ctx.moveTo(basketX + 10, ropeStartY);
-    ctx.bezierCurveTo(basketX + 8 + ropeSway, basketY + 136, basketX - 4 - ropeSway, basketY + 230, basketX + ropeSway, ropeEndY);
+    ctx.bezierCurveTo(basketX + 8 + ropeSway, basketY + 205, basketX - 4 - ropeSway, basketY + 425, basketX + ropeSway, ropeEndY);
     ctx.stroke();
     ctx.strokeStyle = "rgba(169, 143, 94, 0.74)";
     ctx.lineWidth = 1.6;
     ctx.beginPath();
     ctx.moveTo(basketX + 10, ropeStartY);
-    ctx.bezierCurveTo(basketX + 8 + ropeSway, basketY + 136, basketX - 4 - ropeSway, basketY + 230, basketX + ropeSway, ropeEndY);
+    ctx.bezierCurveTo(basketX + 8 + ropeSway, basketY + 205, basketX - 4 - ropeSway, basketY + 425, basketX + ropeSway, ropeEndY);
     ctx.stroke();
     ctx.fillStyle = "rgba(74, 62, 40, 0.96)";
     ctx.beginPath();
