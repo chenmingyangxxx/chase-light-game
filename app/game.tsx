@@ -2354,6 +2354,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<TowerPhysicsGame | null>(null);
   const endingVideoRef = useRef<HTMLVideoElement>(null);
+  const endingMusicRef = useRef<HTMLAudioElement>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
@@ -2393,10 +2394,12 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   useEffect(() => {
     if (!endingPlaying) return;
     const video = endingVideoRef.current;
-    if (!video) return;
+    const soundtrack = endingMusicRef.current;
+    if (!video || !soundtrack) return;
     video.currentTime = 0;
-    const playback = video.play();
-    if (playback) void playback.catch(() => setEndingNeedsGesture(true));
+    soundtrack.currentTime = 0;
+    soundtrack.volume = 1;
+    void Promise.all([video.play(), soundtrack.play()]).catch(() => setEndingNeedsGesture(true));
   }, [endingPlaying]);
 
   const isInteractive = snapshot.status === "building";
@@ -2522,43 +2525,28 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 ref={endingVideoRef}
                 className="ending-cinematic-video"
                 autoPlay
+                muted
                 playsInline
                 preload="auto"
-                onCanPlay={(event) => {
-                  event.currentTarget.volume = 1;
-                  setEndingReady(true);
-                }}
-                onTimeUpdate={(event) => {
-                  const video = event.currentTarget;
-                  if (!Number.isFinite(video.duration) || video.duration <= 0) return;
-                  const remaining = video.duration - video.currentTime;
-                  video.volume = remaining >= 2.8 ? 1 : smoothStep(remaining / 2.8);
-                }}
-                onEnded={(event) => {
-                  const video = event.currentTarget;
-                  if (!Number.isFinite(video.duration)) {
-                    setEndingComplete(true);
-                    return;
-                  }
-                  const holdAt = Math.max(0, video.duration - 0.08);
-                  const revealEnding = () => {
-                    video.pause();
-                    setEndingComplete(true);
-                  };
-                  video.addEventListener("seeked", revealEnding, { once: true });
-                  video.currentTime = holdAt;
-                }}
+                onCanPlay={() => setEndingReady(true)}
+                onEnded={() => setEndingComplete(true)}
                 onError={() => setEndingComplete(true)}
               >
                 <source src="/assets/victory-ending.mp4" type="video/mp4" />
               </video>
+              <audio ref={endingMusicRef} loop preload="auto" aria-hidden="true">
+                <source src="/assets/victory-ending.mp4" type="audio/mp4" />
+              </audio>
               {endingNeedsGesture && !endingComplete && (
                 <button
                   className="ending-play-button"
                   type="button"
                   onClick={() => {
                     setEndingNeedsGesture(false);
-                    void endingVideoRef.current?.play().catch(() => setEndingNeedsGesture(true));
+                    const videoPlayback = endingVideoRef.current?.play();
+                    const soundtrackPlayback = endingMusicRef.current?.play();
+                    const attempts = [videoPlayback, soundtrackPlayback].filter((attempt): attempt is Promise<void> => Boolean(attempt));
+                    void Promise.all(attempts).catch(() => setEndingNeedsGesture(true));
                   }}
                 >
                   播放结局与音乐
@@ -2580,6 +2568,11 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                     type="button"
                     onClick={() => {
                       audio.ui();
+                      const soundtrack = endingMusicRef.current;
+                      if (soundtrack) {
+                        soundtrack.pause();
+                        soundtrack.currentTime = 0;
+                      }
                       setEndingPlaying(false);
                       setEndingComplete(false);
                       onExit();
