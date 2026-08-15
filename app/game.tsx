@@ -363,8 +363,8 @@ class TowerPhysicsGame {
     this.inventory = inventoryFor(level);
     this.engine = this.createEngine();
     this.artwork = {
-      polluted: this.loadArtwork("/assets/wasteland-responsive-polluted-v2.png"),
-      revived: this.loadArtwork("/assets/wasteland-responsive-revived-v2.png"),
+      polluted: this.loadArtwork("/assets/wasteland-master-polluted-hd-v3.png"),
+      revived: this.loadArtwork("/assets/wasteland-master-revived-hd-v3.png"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
       junk: this.loadArtwork("/assets/front-prop-atlas-v2.png"),
@@ -1043,6 +1043,8 @@ class TowerPhysicsGame {
     const ctx = this.context;
     const areaWidth = this.viewportWorldWidth;
     const areaHeight = BACKDROP_BOTTOM - BACKDROP_TOP;
+    // Square HD masters keep a portrait-safe center for phones and reveal the
+    // newly painted side scenery on wide screens. `cover` crops—never stretches.
     const sourceAspect = image.naturalWidth / image.naturalHeight;
     const areaAspect = areaWidth / areaHeight;
     let renderedWidth = areaWidth;
