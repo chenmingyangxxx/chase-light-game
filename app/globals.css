@@ -677,11 +677,11 @@ body {
 .launch-loader {
   position: absolute;
   z-index: 2;
-  top: 50%;
+  top: 64%;
   left: 50%;
   display: grid;
-  width: 86px;
-  height: 86px;
+  width: 68px;
+  height: 68px;
   place-items: center;
   transform: translate(-50%, -50%);
   filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.42));
@@ -709,7 +709,7 @@ body {
   min-width: 42px;
   color: #edf4d5;
   font-family: "Arial Narrow", "Microsoft YaHei", sans-serif;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: -.04em;
   text-align: center;
