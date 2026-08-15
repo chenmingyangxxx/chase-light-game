@@ -15,6 +15,7 @@ const BASE_X = WORLD_WIDTH / 2;
 const BASE_Y = 1860;
 const PIXELS_PER_METER = 10;
 const STACK_PLATFORM_WIDTH = 242;
+const GOAL_BASKET_X = BASE_X + 14;
 const RECOVERY_Y = BASE_Y + 94;
 const BACKDROP_TOP = 600;
 const BACKDROP_BOTTOM = BASE_Y + 124;
@@ -1078,7 +1079,7 @@ class TowerPhysicsGame {
 
   private drawGoalRig(collectProgress: number) {
     const ctx = this.context;
-    const basketX = BASE_X + 92;
+    const basketX = GOAL_BASKET_X;
     const basketY = BASE_Y - 99 * PIXELS_PER_METER + 16;
     const boomY = basketY - 150;
     ctx.save();
@@ -1148,7 +1149,7 @@ class TowerPhysicsGame {
   private drawSuccessRobot() {
     if (!this.imageReady(this.artwork.robot)) return;
     const ctx = this.context;
-    const basketX = BASE_X + 92;
+    const basketX = GOAL_BASKET_X;
     const basketY = BASE_Y - 99 * PIXELS_PER_METER + 16;
     const progress = this.activationProgress();
     const arrival = clamp((progress - 0.1) / 0.38, 0, 1);
