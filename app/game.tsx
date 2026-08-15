@@ -45,11 +45,10 @@ const STRENGTH_MULTIPLIER = 3;
 // otherwise sound tower fail under a single gait cycle.
 const ROBOT_CLIMB_LOAD_MULTIPLIER = 0.5;
 const RECOVERY_Y = BASE_Y + 113;
-// The camera can rise above the authored background crop while revealing the
-// crane. Extend the cloudy sky beyond that crop so no dark canvas strip is
-// exposed at the top of a wide or tall display.
+// Both user-supplied gameplay paintings cover the complete camera range, from
+// the highest crane view down to the physical floor. No separate sky patch is
+// composited, avoiding a visible seam at the top of the scene.
 const BACKDROP_SKY_TOP = 410;
-const BACKDROP_TOP = 600;
 const BACKDROP_BOTTOM = BASE_Y + 149;
 const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 84;
 const MIN_CAMERA_OFFSET = VIEW_GROUND_CAMERA - 20;
@@ -396,9 +395,10 @@ function initialSnapshot(level: LevelConfig): GameSnapshot {
 }
 
 /**
- * Layered game sound: the login-film score continues as a low-volume musical
- * bed while procedural ambience and material-aware effects stay responsive to
- * the physics simulation.
+ * Layered game sound: a clean procedural score supports the build scene while
+ * material-aware effects stay responsive to the physics simulation. The login
+ * film soundtrack is intentionally not reused here because it contains
+ * diegetic footsteps that read as stray noise during construction.
  */
 class GameAudio {
   private context: AudioContext | null = null;
@@ -406,8 +406,6 @@ class GameAudio {
   private effects: GainNode | null = null;
   private ambience: GainNode | null = null;
   private ambientSources: AudioScheduledSourceNode[] = [];
-  private musicElement: HTMLAudioElement | null = null;
-  private musicFadeTimer: number | null = null;
   private enabled = true;
   private gameplayActive = false;
   private lastImpactAt = 0;
@@ -433,7 +431,6 @@ class GameAudio {
     if (this.context.state === "suspended") await this.context.resume();
     if (this.gameplayActive) {
       this.startAmbience();
-      this.startMusic();
     }
   }
 
@@ -445,32 +442,17 @@ class GameAudio {
     this.master.gain.setTargetAtTime(enabled ? 0.72 : 0, now, 0.035);
     if (enabled && this.gameplayActive) {
       this.startAmbience();
-      this.startMusic();
     }
   }
 
   startGameplay() {
     this.gameplayActive = true;
     this.startAmbience();
-    this.startMusic();
   }
 
   stopGameplay() {
     this.gameplayActive = false;
-    this.stopMusic();
     this.stopAmbience();
-  }
-
-  async primeGameplayMusic() {
-    if (!this.enabled) return;
-    const player = this.ensureMusicElement();
-    if (!player || !player.paused) return;
-    player.volume = 0.001;
-    try {
-      await player.play();
-    } catch {
-      // startGameplay retries after the transition if playback was blocked.
-    }
   }
 
   ui() {
@@ -561,9 +543,41 @@ class GameAudio {
     hum.connect(humFilter);
     humFilter.connect(humGain);
     humGain.connect(this.ambience);
+
+    // A sparse A-minor suspended pad supplies the musical bed without any
+    // recorded footsteps or other scene-specific transient noise.
+    const padBus = context.createGain();
+    const padFilter = context.createBiquadFilter();
+    padBus.gain.value = 0.032;
+    padFilter.type = "lowpass";
+    padFilter.frequency.value = 520;
+    padFilter.Q.value = 0.42;
+    padBus.connect(padFilter);
+    padFilter.connect(this.ambience);
+    const padFrequencies = [55, 82.41, 110];
+    const pads = padFrequencies.map((frequency, index) => {
+      const oscillator = context.createOscillator();
+      const voiceGain = context.createGain();
+      oscillator.type = index === 1 ? "triangle" : "sine";
+      oscillator.frequency.value = frequency;
+      oscillator.detune.value = index === 0 ? -5 : index === 2 ? 4 : 0;
+      voiceGain.gain.value = index === 1 ? 0.16 : 0.11;
+      oscillator.connect(voiceGain);
+      voiceGain.connect(padBus);
+      oscillator.start();
+      return oscillator;
+    });
+    const padBreath = context.createOscillator();
+    const padBreathDepth = context.createGain();
+    padBreath.type = "sine";
+    padBreath.frequency.value = 0.045;
+    padBreathDepth.gain.value = 0.009;
+    padBreath.connect(padBreathDepth);
+    padBreathDepth.connect(padBus.gain);
+    padBreath.start();
     wind.start();
     hum.start();
-    this.ambientSources = [wind, hum];
+    this.ambientSources = [wind, hum, ...pads, padBreath];
   }
 
   private stopAmbience() {
@@ -572,57 +586,6 @@ class GameAudio {
       source.disconnect();
     });
     this.ambientSources = [];
-  }
-
-  private startMusic() {
-    if (!this.enabled || !this.gameplayActive) return;
-    const player = this.ensureMusicElement();
-    if (!player) return;
-    const revealMusic = () => this.fadeMusicTo(0.32, 1500);
-    if (player.paused) {
-      player.volume = 0.001;
-      void player.play().then(revealMusic).catch(() => undefined);
-    } else {
-      revealMusic();
-    }
-  }
-
-  private stopMusic() {
-    if (this.musicFadeTimer !== null) window.clearInterval(this.musicFadeTimer);
-    this.musicFadeTimer = null;
-    if (!this.musicElement) return;
-    this.musicElement.pause();
-    this.musicElement.currentTime = 0;
-    this.musicElement.volume = 0;
-  }
-
-  private ensureMusicElement() {
-    if (this.musicElement) return this.musicElement;
-    if (typeof Audio === "undefined") return null;
-    const player = new Audio("/assets/launch-original-with-music.mp4");
-    player.loop = true;
-    player.preload = "auto";
-    player.volume = 0;
-    player.playsInline = true;
-    this.musicElement = player;
-    return player;
-  }
-
-  private fadeMusicTo(target: number, duration: number) {
-    const player = this.musicElement;
-    if (!player) return;
-    if (this.musicFadeTimer !== null) window.clearInterval(this.musicFadeTimer);
-    const startVolume = player.volume;
-    const steps = Math.max(1, Math.round(duration / 50));
-    let step = 0;
-    this.musicFadeTimer = window.setInterval(() => {
-      step += 1;
-      const progress = smoothStep(step / steps);
-      player.volume = clamp(startVolume + (target - startVolume) * progress, 0, 1);
-      if (step < steps) return;
-      if (this.musicFadeTimer !== null) window.clearInterval(this.musicFadeTimer);
-      this.musicFadeTimer = null;
-    }, 50);
   }
 
   private tone(
@@ -709,10 +672,7 @@ class TowerPhysicsGame {
   private baseBody: Matter.Body | null = null;
   private readonly artwork: Record<
     | "polluted"
-    | "pollutedWide"
-    | "pollutedSky"
     | "revived"
-    | "revivedWide"
     | "junk"
     | "risky"
     | "debris"
@@ -741,15 +701,10 @@ class TowerPhysicsGame {
     this.inventory = inventoryFor(level);
     this.engine = this.createEngine();
     this.artwork = {
-      // The user's original portrait paintings remain the canonical phone
-      // backgrounds. The wide companions only extend those same paintings at
-      // the sides, so desktop gains scenery without stretching or replacing
-      // the mobile composition.
-      polluted: this.loadArtwork("/assets/wasteland-flat-polluted.png"),
-      pollutedWide: this.loadArtwork("/assets/wasteland-expanded-polluted-v6.png"),
-      pollutedSky: this.loadArtwork("/assets/wasteland-polluted-sky-extension-v1.png"),
-      revived: this.loadArtwork("/assets/wasteland-flat-revived.png"),
-      revivedWide: this.loadArtwork("/assets/wasteland-expanded-revived-v6.png"),
+      // These two complete-width paintings are the canonical gameplay pair.
+      // Cover cropping adapts them to phone and desktop without stretching.
+      polluted: this.loadArtwork("/assets/wasteland-gameplay-polluted-full-v7.png"),
+      revived: this.loadArtwork("/assets/wasteland-gameplay-revived-full-v7.png"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
       junk: this.loadArtwork("/assets/front-prop-atlas-v2.png"),
@@ -1575,18 +1530,15 @@ class TowerPhysicsGame {
     const revived = this.artwork.revived;
 
     this.drawFallbackSky(illuminate);
-    if (this.imageReady(this.artwork.pollutedSky)) {
-      this.drawSkyExtension(this.artwork.pollutedSky);
-    }
     if (this.imageReady(polluted)) {
       ctx.globalAlpha = 0.96;
-      this.drawLongBackdrop(polluted, this.artwork.pollutedWide);
+      this.drawLongBackdrop(polluted);
       ctx.globalAlpha = 1;
     }
     if (illuminate > 0 && this.imageReady(revived)) {
       ctx.save();
       ctx.globalAlpha = illuminate;
-      this.drawLongBackdrop(revived, this.artwork.revivedWide);
+      this.drawLongBackdrop(revived);
       ctx.restore();
     }
 
@@ -1705,15 +1657,13 @@ class TowerPhysicsGame {
     ctx.restore();
   }
 
-  private drawLongBackdrop(portraitImage: HTMLImageElement, wideImage: HTMLImageElement) {
+  private drawLongBackdrop(image: HTMLImageElement) {
     const ctx = this.context;
     const areaWidth = this.viewportWorldWidth;
-    const areaHeight = BACKDROP_BOTTOM - BACKDROP_TOP;
-    // Keep the exact original painting on phone-sized viewports. Only desktop
-    // selects the outpainted companion, whose centre and metre scale match the
-    // portrait master. Both paths use cover cropping and never deform pixels.
-    const useWideArtwork = areaWidth > WORLD_WIDTH * 1.08 && this.imageReady(wideImage);
-    const image = useWideArtwork ? wideImage : portraitImage;
+    const areaHeight = BACKDROP_BOTTOM - BACKDROP_SKY_TOP;
+    // The complete new painting reaches the top of the highest camera view.
+    // Cover cropping preserves its aspect ratio: wide screens reveal more of
+    // the authored sides, while narrow screens crop those quiet outer areas.
     const sourceAspect = image.naturalWidth / image.naturalHeight;
     const areaAspect = areaWidth / areaHeight;
     let renderedWidth = areaWidth;
@@ -1722,33 +1672,14 @@ class TowerPhysicsGame {
       renderedHeight = areaHeight;
       renderedWidth = areaHeight * sourceAspect;
     }
-    // Cover the complete responsive viewport without deforming the artwork.
-    // Ground remains pinned to the physical floor while excess width/height
-    // is safely cropped at the quiet edges of the generated composition.
+    // Ground remains pinned to the physical floor and the image now covers the
+    // sky range directly, so no generated extension or dark strip is needed.
     const renderedX = BASE_X - renderedWidth / 2;
     const renderedY = BACKDROP_BOTTOM - renderedHeight;
     ctx.save();
     ctx.beginPath();
     ctx.rect(this.viewportWorldLeft, BACKDROP_SKY_TOP, areaWidth, BACKDROP_BOTTOM - BACKDROP_SKY_TOP);
     ctx.clip();
-    ctx.drawImage(image, renderedX, renderedY, renderedWidth, renderedHeight);
-    ctx.restore();
-  }
-
-  private drawSkyExtension(image: HTMLImageElement) {
-    const ctx = this.context;
-    const areaWidth = this.viewportWorldWidth;
-    const areaHeight = BACKDROP_TOP - BACKDROP_SKY_TOP + 28;
-    const scale = Math.max(areaWidth / image.naturalWidth, areaHeight / image.naturalHeight);
-    const renderedWidth = image.naturalWidth * scale;
-    const renderedHeight = image.naturalHeight * scale;
-    const renderedX = BASE_X - renderedWidth / 2;
-    const renderedY = BACKDROP_SKY_TOP + (areaHeight - renderedHeight) / 2;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(this.viewportWorldLeft, BACKDROP_SKY_TOP, areaWidth, areaHeight);
-    ctx.clip();
-    ctx.globalAlpha = 0.94;
     ctx.drawImage(image, renderedX, renderedY, renderedWidth, renderedHeight);
     ctx.restore();
   }
@@ -2711,7 +2642,6 @@ export function DawnTowerGame() {
   const startGame = async () => {
     if (launchLeaving) return;
     setLaunchLeaving(true);
-    void audio.primeGameplayMusic();
     try {
       await audio.unlock();
       audio.setEnabled(true);
