@@ -22,7 +22,7 @@ test("server-renders the Chase Light launch screen", async () => {
   assert.match(html, /<title>余烬之光｜物理堆叠小游戏<\/title>/);
   assert.match(html, /追光，并生/);
   assert.match(html, /class="launch-screen"/);
-  assert.match(html, /chase-light-sprout-hook\.png/);
+  assert.match(html, /pursue-light-hook-logo\.png/);
   assert.match(html, /aria-label="正在载入游戏"/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site|codex-preview/);
 });

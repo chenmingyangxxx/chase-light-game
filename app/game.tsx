@@ -1673,12 +1673,12 @@ export function DawnTowerGame() {
         {!ready && (
           <div className="launch-loader" role="status" aria-label="正在载入游戏">
             <span className="launch-loader-ring" aria-hidden="true" />
-            <img className="launch-loader-mark" src="/assets/chase-light-sprout-hook.png" alt="" />
+            <img className="launch-loader-mark" src="/assets/pursue-light-hook-logo.png" alt="" />
           </div>
         )}
         <section className="launch-content">
           <div className="launch-brand">
-            <img className="launch-emblem" src="/assets/chase-light-sprout-hook.png" alt="" />
+            <img className="launch-emblem" src="/assets/pursue-light-hook-logo.png" alt="" />
             <p className="launch-kicker">废墟之上 · 新芽未熄</p>
             <h1 id="launch-title">追光，并生</h1>
             <p className="launch-english">CHASE THE LIGHT · LET LIFE BEGIN</p>
