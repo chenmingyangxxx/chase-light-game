@@ -175,21 +175,21 @@ const ITEM_ICON_ART: Record<ItemId, IconSprite> = {
 
 const ITEMS: Record<ItemId, ItemDefinition> = {
   pallet: {
-    id: "pallet", name: "木托盘", shortName: "托", role: "foundation", shape: "box", width: 160, height: 17,
+    id: "pallet", name: "木托盘", shortName: "托", role: "foundation", shape: "box", width: 126, height: 94,
     density: 0.0022, friction: 0.88, frictionStatic: 1.05, restitution: 0.01, color: "#9b6b45", accent: "#d3a271", trait: "宽 · 稳",
   },
   slab: {
-    id: "slab", name: "混凝土板", shortName: "板", role: "foundation", shape: "box", width: 174, height: 23,
+    id: "slab", name: "混凝土板", shortName: "板", role: "foundation", shape: "box", width: 140, height: 86,
     density: 0.0044, friction: 0.94, frictionStatic: 1.2, restitution: 0.005, color: "#66747a", accent: "#9ba9a9", trait: "极重 · 防滑",
   },
   container: {
-    // A 20-foot container is long and low. Keeping this close to its real-world
-    // proportion makes it a useful base instead of an unrealistically tall box.
-    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 225, height: 38,
+    // This is an orthographic end-front container prop, so its collider follows
+    // the visible face instead of an unrelated side-view shipping-container ratio.
+    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 177, height: 112,
     density: 0.0033, friction: 0.78, frictionStatic: 0.96, restitution: 0.01, color: "#536f74", accent: "#a2b8a7", trait: "重 · 可堆高",
   },
   car: {
-    id: "car", name: "报废车壳", shortName: "车", role: "foundation", shape: "box", width: 148, height: 55,
+    id: "car", name: "报废车壳", shortName: "车", role: "foundation", shape: "box", width: 148, height: 64,
     density: 0.0048, friction: 0.74, frictionStatic: 0.9, restitution: 0.02, color: "#785751", accent: "#c18c68", trait: "宽 · 压重",
   },
   cabinet: {
@@ -197,35 +197,35 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
     density: 0.0031, friction: 0.73, frictionStatic: 0.9, restitution: 0.02, color: "#6c7c65", accent: "#b9c697", trait: "高 · 偏重",
   },
   sofa: {
-    id: "sofa", name: "旧沙发", shortName: "沙", role: "foundation", shape: "box", width: 116, height: 43,
+    id: "sofa", name: "旧沙发", shortName: "沙", role: "foundation", shape: "box", width: 116, height: 70,
     density: 0.0028, friction: 0.85, frictionStatic: 1.05, restitution: 0.02, color: "#75554c", accent: "#ca9880", trait: "宽 · 高摩擦",
   },
   beam: {
-    id: "beam", name: "废旧钢梁", shortName: "梁", role: "bridge", shape: "box", width: 176, height: 15,
+    id: "beam", name: "废旧钢梁", shortName: "梁", role: "bridge", shape: "box", width: 178, height: 49,
     density: 0.0032, friction: 0.8, frictionStatic: 0.98, restitution: 0.01, color: "#7e8382", accent: "#d1c9a8", trait: "长 · 可桥接",
   },
   ladder: {
-    id: "ladder", name: "金属梯", shortName: "梯", role: "bridge", shape: "box", width: 136, height: 15,
+    id: "ladder", name: "金属梯", shortName: "梯", role: "tall", shape: "box", width: 44, height: 136,
     density: 0.0019, friction: 0.63, frictionStatic: 0.75, restitution: 0.03, color: "#8b9d87", accent: "#d6dfba", trait: "轻 · 易翘",
   },
   pipes: {
-    id: "pipes", name: "管束", shortName: "管", role: "bridge", shape: "box", width: 128, height: 25,
+    id: "pipes", name: "管束", shortName: "管", role: "bridge", shape: "box", width: 128, height: 62,
     density: 0.0029, friction: 0.58, frictionStatic: 0.7, restitution: 0.04, color: "#647a82", accent: "#b1c2c6", trait: "长 · 易滑",
   },
   crate: {
-    id: "crate", name: "回收箱", shortName: "箱", role: "block", shape: "box", width: 58, height: 31,
+    id: "crate", name: "回收箱", shortName: "箱", role: "block", shape: "box", width: 60, height: 47,
     density: 0.0025, friction: 0.81, frictionStatic: 0.98, restitution: 0.015, color: "#b7784f", accent: "#e2ae70", trait: "规则 · 易堆",
   },
   fridge: {
-    id: "fridge", name: "旧冰箱", shortName: "冰", role: "tall", shape: "box", width: 45, height: 74,
+    id: "fridge", name: "旧冰箱", shortName: "冰", role: "tall", shape: "box", width: 46, height: 82,
     density: 0.0038, friction: 0.74, frictionStatic: 0.88, restitution: 0.01, color: "#7790a0", accent: "#d6e0d5", trait: "高 · 可封顶",
   },
   washer: {
-    id: "washer", name: "洗衣机", shortName: "洗", role: "block", shape: "box", width: 51, height: 51,
+    id: "washer", name: "洗衣机", shortName: "洗", role: "block", shape: "box", width: 60, height: 68,
     density: 0.0034, friction: 0.76, frictionStatic: 0.93, restitution: 0.01, color: "#8e9e9a", accent: "#cbd6cd", trait: "方正 · 压重",
   },
   computer: {
-    id: "computer", name: "旧电脑", shortName: "机", role: "block", shape: "box", width: 54, height: 30,
+    id: "computer", name: "旧电脑", shortName: "机", role: "block", shape: "box", width: 64, height: 57,
     density: 0.0018, friction: 0.64, frictionStatic: 0.74, restitution: 0.04, color: "#57636b", accent: "#9daeb5", trait: "小 · 填缝",
   },
   scaffold: {
@@ -233,19 +233,19 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
     density: 0.0022, friction: 0.68, frictionStatic: 0.81, restitution: 0.02, color: "#76866c", accent: "#d6cc88", trait: "很高 · 须居中",
   },
   barrel: {
-    id: "barrel", name: "旧油桶", shortName: "桶", role: "risky", shape: "circle", width: 42, height: 42,
-    density: 0.0024, friction: 0.38, frictionStatic: 0.48, restitution: 0.15, color: "#a37445", accent: "#edc161", trait: "会滚动",
+    id: "barrel", name: "旧油桶", shortName: "桶", role: "risky", shape: "box", width: 50, height: 70,
+    density: 0.0024, friction: 0.48, frictionStatic: 0.58, restitution: 0.07, color: "#a37445", accent: "#edc161", trait: "高 · 易倒",
   },
   tire: {
     id: "tire", name: "轮胎", shortName: "胎", role: "risky", shape: "circle", width: 46, height: 46,
     density: 0.0027, friction: 0.54, frictionStatic: 0.68, restitution: 0.2, color: "#333b3a", accent: "#9fa78c", trait: "弹性 · 可配重",
   },
   bicycle: {
-    id: "bicycle", name: "旧自行车", shortName: "车", role: "risky", shape: "box", width: 95, height: 42,
+    id: "bicycle", name: "旧自行车", shortName: "车", role: "risky", shape: "box", width: 116, height: 82,
     density: 0.0013, friction: 0.34, frictionStatic: 0.42, restitution: 0.08, color: "#6e7e5f", accent: "#d2b86a", trait: "轻 · 难稳定",
   },
   chair: {
-    id: "chair", name: "办公椅", shortName: "椅", role: "risky", shape: "box", width: 53, height: 66,
+    id: "chair", name: "办公椅", shortName: "椅", role: "risky", shape: "box", width: 64, height: 100,
     density: 0.0016, friction: 0.4, frictionStatic: 0.52, restitution: 0.05, color: "#745f56", accent: "#c5a477", trait: "偏心 · 易倒",
   },
 };
@@ -333,7 +333,7 @@ class TowerPhysicsGame {
   private cameraManualOffsetY = 0;
   private panning: { pointerId: number; lastClientY: number } | null = null;
   private baseBody: Matter.Body | null = null;
-  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris" | "goal", HTMLImageElement>;
+  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris" | "goal" | "robot", HTMLImageElement>;
 
   constructor(canvas: HTMLCanvasElement, level: LevelConfig, onUpdate: (snapshot: GameSnapshot) => void, onClear: () => void) {
     const context = canvas.getContext("2d");
@@ -354,6 +354,7 @@ class TowerPhysicsGame {
       risky: this.loadArtwork("/assets/front-risky-props.png"),
       debris: this.loadArtwork("/assets/ground-debris-foreground.png"),
       goal: this.loadArtwork("/assets/crane-basket-sprout.png"),
+      robot: this.loadArtwork("/assets/sprout-helper-robot.png"),
     };
     this.createWorld();
   }
@@ -508,8 +509,8 @@ class TowerPhysicsGame {
   private createEngine() {
     return Engine.create({
       enableSleeping: true,
-      positionIterations: 10,
-      velocityIterations: 8,
+      positionIterations: 14,
+      velocityIterations: 12,
       constraintIterations: 3,
       gravity: { x: 0, y: 1, scale: 0.001 },
     });
@@ -676,7 +677,7 @@ class TowerPhysicsGame {
       frictionAir: 0.018,
       // Tight contact tolerance reduces the visible air gaps in a carefully
       // placed stack while retaining normal Matter collision resolution.
-      slop: 0.005,
+      slop: 0.001,
       label: `item:${item.id}`,
     };
     const body = (item.shape === "circle"
@@ -816,16 +817,18 @@ class TowerPhysicsGame {
     const left = x - item.width / 2;
     const right = x + item.width / 2;
     const candidates = this.dynamicBodies.filter((body) => body !== excluded && !this.isFallen(body));
+    const proposedBottom = y + item.height / 2;
     if (candidates.length === 0) {
       const platformOverlap = Math.min(right, BASE_X + STACK_PLATFORM_WIDTH / 2) - Math.max(left, BASE_X - STACK_PLATFORM_WIDTH / 2);
-      return platformOverlap >= Math.max(16, Math.min(item.width, STACK_PLATFORM_WIDTH) * 0.38);
+      return platformOverlap >= Math.max(16, Math.min(item.width, STACK_PLATFORM_WIDTH) * 0.38)
+        && proposedBottom <= BASE_Y - 14;
     }
     return candidates.some((support) => {
       const overlap = Math.min(right, support.bounds.max.x) - Math.max(left, support.bounds.min.x);
       const narrowest = Math.min(item.width, support.bounds.max.x - support.bounds.min.x);
       // The release may be slightly above its support so it can visibly fall,
       // but never beside it or from below it.
-      return support.bounds.min.y >= y - item.height * 0.2
+      return proposedBottom <= support.bounds.min.y + 8
         && overlap >= Math.max(14, narrowest * 0.34);
     });
   }
@@ -974,11 +977,11 @@ class TowerPhysicsGame {
       ctx.save();
       ctx.globalAlpha = 0.94 - illuminate * 0.2;
       // Keep the ruin strip grounded instead of floating in the build space.
-      ctx.drawImage(this.artwork.debris, 0, BASE_Y - 146, WORLD_WIDTH, 146);
+      ctx.drawImage(this.artwork.debris, 0, BASE_Y - 170, WORLD_WIDTH, BACKDROP_BOTTOM - (BASE_Y - 170));
       ctx.restore();
     }
     this.drawStackPlatform();
-    this.drawGoalRig();
+    this.drawGoalRig(this.activationProgress());
     this.drawGrowth(illuminate, this.elapsed);
 
   }
@@ -986,9 +989,10 @@ class TowerPhysicsGame {
   private drawLongBackdrop(image: HTMLImageElement) {
     const ctx = this.context;
     const nativeHeight = image.naturalHeight * (WORLD_WIDTH / image.naturalWidth);
-    const renderedHeight = Math.max(nativeHeight, BASE_Y + 18 - BACKDROP_TOP);
-    // Keep the generated ground aligned with the simulation floor while exposing a long upper sky as the camera rises.
-    ctx.drawImage(image, 0, BASE_Y + 18 - renderedHeight, WORLD_WIDTH, renderedHeight);
+    const renderedHeight = Math.max(nativeHeight, BACKDROP_BOTTOM - BACKDROP_TOP);
+    // Align the background to the very bottom of the camera world so no dark
+    // unused seam opens underneath the physical ground and steel platform.
+    ctx.drawImage(image, 0, BACKDROP_BOTTOM - renderedHeight, WORLD_WIDTH, renderedHeight);
   }
 
   private drawFallbackSky(illuminate: number) {
@@ -1036,53 +1040,43 @@ class TowerPhysicsGame {
     const y = BASE_Y - 24;
     ctx.save();
 
-    // A short, static steel deck resting on a compact rubbish mound. It is
-    // drawn here and mirrored by the Matter static body created in createWorld.
-    ctx.fillStyle = "rgba(13, 20, 21, 0.55)";
+    // A single weathered steel plate sits flush with the ruined floor; its
+    // outline exactly mirrors the static Matter collision platform.
+    ctx.fillStyle = "rgba(10, 15, 16, 0.52)";
     ctx.beginPath();
-    ctx.ellipse(BASE_X, BASE_Y - 4, 152, 21, 0, 0, Math.PI * 2);
+    ctx.ellipse(BASE_X, BASE_Y - 2, 138, 15, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "rgba(42, 47, 43, 0.94)";
-    ctx.beginPath();
-    ctx.moveTo(x + 18, BASE_Y - 7);
-    ctx.lineTo(x + 48, BASE_Y - 20);
-    ctx.lineTo(x + width - 48, BASE_Y - 20);
-    ctx.lineTo(x + width - 18, BASE_Y - 7);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = "rgba(75, 69, 56, 0.72)";
-    for (let index = 0; index < 6; index += 1) {
-      const rubbleX = x + 30 + index * 34;
-      ctx.beginPath();
-      ctx.arc(rubbleX, BASE_Y - 9 - (index % 2) * 3, 9 + (index % 3), 0, Math.PI * 2);
-      ctx.fill();
-    }
     roundedRect(ctx, x, y, width, height, 5);
-    ctx.fillStyle = "#303b3a";
+    const plate = ctx.createLinearGradient(x, y, x, y + height);
+    plate.addColorStop(0, "#4d5450");
+    plate.addColorStop(0.22, "#353e3c");
+    plate.addColorStop(1, "#1a2424");
+    ctx.fillStyle = plate;
     ctx.fill();
-    ctx.strokeStyle = "rgba(14, 24, 25, 0.95)";
-    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(11, 18, 19, 0.96)";
+    ctx.lineWidth = 3;
     ctx.stroke();
-    ctx.fillStyle = "rgba(119, 128, 113, 0.3)";
-    ctx.fillRect(x + 8, y + 7, width - 16, 5);
-    ctx.strokeStyle = "rgba(99, 88, 64, 0.78)";
-    ctx.lineWidth = 2;
-    for (let railX = x + 18; railX < x + width - 14; railX += 24) {
+    ctx.fillStyle = "rgba(180, 173, 143, 0.18)";
+    ctx.fillRect(x + 10, y + 5, width - 20, 2);
+    ctx.strokeStyle = "rgba(90, 65, 45, 0.42)";
+    ctx.lineWidth = 1.2;
+    for (let scratch = 0; scratch < 7; scratch += 1) {
+      const scratchX = x + 26 + scratch * 28;
       ctx.beginPath();
-      ctx.moveTo(railX, y + 15);
-      ctx.lineTo(railX + 10, y + 28);
+      ctx.moveTo(scratchX, y + 13);
+      ctx.lineTo(scratchX + 9, y + 17);
       ctx.stroke();
     }
-    ctx.fillStyle = "rgba(205, 210, 184, 0.65)";
-    for (const boltX of [x + 12, x + width - 12]) {
+    ctx.fillStyle = "rgba(141, 145, 127, 0.6)";
+    for (const boltX of [x + 12, x + width - 12, BASE_X - 42, BASE_X + 42]) {
       ctx.beginPath();
-      ctx.arc(boltX, y + 17, 2.4, 0, Math.PI * 2);
+      ctx.arc(boltX, y + 15, 2.1, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
   }
 
-  private drawGoalRig() {
+  private drawGoalRig(collectProgress: number) {
     const ctx = this.context;
     const basketX = BASE_X + 92;
     const basketY = BASE_Y - 99 * PIXELS_PER_METER + 16;
@@ -1127,6 +1121,15 @@ class TowerPhysicsGame {
       ctx.arc(basketX + 2, basketY - 60, 4, 0, Math.PI * 2);
       ctx.fill();
     }
+    if (collectProgress > 0.48) {
+      const glow = ctx.createRadialGradient(basketX, basketY - 51, 1, basketX, basketY - 51, 24);
+      glow.addColorStop(0, `rgba(211, 243, 150, ${Math.min(0.35, (collectProgress - 0.48) * 1.1)})`);
+      glow.addColorStop(1, "rgba(211, 243, 150, 0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(basketX, basketY - 51, 24, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -1139,7 +1142,66 @@ class TowerPhysicsGame {
     if (this.status === "activating" || this.status === "cleared") {
       ctx.fillStyle = `rgba(255, 240, 166, ${0.12 + illuminate * 0.18})`;
       ctx.fillRect(0, BACKDROP_TOP, WORLD_WIDTH, BACKDROP_BOTTOM - BACKDROP_TOP);
+      this.drawSuccessRobot();
     }
+  }
+
+  private drawSuccessRobot() {
+    if (!this.imageReady(this.artwork.robot)) return;
+    const ctx = this.context;
+    const basketX = BASE_X + 92;
+    const basketY = BASE_Y - 99 * PIXELS_PER_METER + 16;
+    const progress = this.activationProgress();
+    const arrival = clamp((progress - 0.1) / 0.38, 0, 1);
+    const grasp = clamp((progress - 0.56) / 0.26, 0, 1);
+    const easeArrival = 1 - (1 - arrival) * (1 - arrival);
+    const robotWidth = 98;
+    const robotHeight = 147;
+    const robotX = basketX - 152 + 88 * easeArrival;
+    const robotY = basketY - 86 + Math.sin(this.elapsed / 150) * 1.3;
+
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, arrival * 2.2);
+    ctx.translate(robotX, robotY + (1 - arrival) * 12);
+    ctx.rotate(-0.06 + Math.sin(this.elapsed / 190) * 0.018);
+    ctx.drawImage(this.artwork.robot, -robotWidth / 2, 0, robotWidth, robotHeight);
+    ctx.restore();
+
+    if (grasp <= 0) return;
+    const flowerX = basketX + (robotX + 43 - basketX) * grasp;
+    const flowerY = basketY - 52 + (robotY + 34 - (basketY - 52)) * grasp;
+    this.drawCollectedSprout(flowerX, flowerY, 0.9 + grasp * 0.18);
+  }
+
+  private drawCollectedSprout(x: number, y: number, scale: number) {
+    const ctx = this.context;
+    ctx.save();
+    ctx.strokeStyle = "#91c968";
+    ctx.lineWidth = 1.8 * scale;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x, y + 11 * scale);
+    ctx.quadraticCurveTo(x - 2 * scale, y + 3 * scale, x, y - 5 * scale);
+    ctx.stroke();
+    ctx.fillStyle = "#a8d976";
+    ctx.beginPath();
+    ctx.ellipse(x - 4 * scale, y + 2 * scale, 4 * scale, 1.8 * scale, -0.42, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(x + 3 * scale, y - 1 * scale, 4 * scale, 1.8 * scale, 0.45, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#f1e79a";
+    for (let petal = 0; petal < 5; petal += 1) {
+      const angle = (petal / 5) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.ellipse(x + Math.cos(angle) * 3.1 * scale, y - 6 * scale + Math.sin(angle) * 3.1 * scale, 2.2 * scale, 1.5 * scale, angle, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#e1b86a";
+    ctx.beginPath();
+    ctx.arc(x, y - 6 * scale, 1.7 * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   private drawSceneRuler() {
@@ -1399,6 +1461,42 @@ function GameStage({ level }: GameStageProps) {
               <span>地表复苏中</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
             </div>
           )}
+          <aside className="inventory-panel panel" aria-label="垃圾物品列表">
+            <div className="inventory-head"><strong>垃圾物品</strong><span>{availablePieces}</span></div>
+            <div className="inventory-list">
+              {inventoryItems
+                .map((id) => {
+                  const item = ITEMS[id];
+                  const count = snapshot.inventory[id];
+                  const highlighted = snapshot.hint?.itemId === item.id;
+                  return (
+                    <button
+                      className={`material-card ${highlighted ? "recommended" : ""} ${count === 0 ? "depleted" : ""}`}
+                      type="button"
+                      key={item.id}
+                      disabled={!isInteractive || count === 0}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.currentTarget.setPointerCapture?.(event.pointerId);
+                        gameRef.current?.startHolding(item.id, event.clientX, event.clientY, event.pointerId);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        gameRef.current?.startHolding(item.id, rect.left + rect.width / 2, rect.top + rect.height / 2, -1);
+                      }}
+                      aria-label={`拖拽 ${item.name}，剩余 ${count} 件`}
+                    >
+                      <span className={`material-icon ${item.role}`} style={materialThumbnailStyle(item.id)} aria-hidden="true" />
+                      <span className="material-copy"><b>{item.name}</b></span>
+                      <span className="material-count">×{count}</span>
+                    </button>
+                  );
+                })}
+              {Object.values(snapshot.inventory).every((count) => count === 0) && <p className="empty-inventory">物料已经用完，建议重试本关。</p>}
+            </div>
+          </aside>
           {(snapshot.status === "cleared" || snapshot.status === "failed") && (
             <div className={`result-overlay ${snapshot.status}`}>
               <div className="result-symbol">{snapshot.status === "cleared" ? "✦" : "↯"}</div>
@@ -1410,43 +1508,6 @@ function GameStage({ level }: GameStageProps) {
           )}
         </div>
       </div>
-
-      <aside className="inventory-panel panel">
-        <div className="inventory-head"><strong>垃圾物品</strong><span>{availablePieces}</span></div>
-        <div className="inventory-list">
-          {inventoryItems
-            .map((id) => {
-              const item = ITEMS[id];
-              const count = snapshot.inventory[id];
-              const highlighted = snapshot.hint?.itemId === item.id;
-              return (
-                <button
-                  className={`material-card ${highlighted ? "recommended" : ""} ${count === 0 ? "depleted" : ""}`}
-                  type="button"
-                  key={item.id}
-                  disabled={!isInteractive || count === 0}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.currentTarget.setPointerCapture?.(event.pointerId);
-                    gameRef.current?.startHolding(item.id, event.clientX, event.clientY, event.pointerId);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    gameRef.current?.startHolding(item.id, rect.left + rect.width / 2, rect.top + rect.height / 2, -1);
-                  }}
-                  aria-label={`拖拽 ${item.name}，剩余 ${count} 件`}
-                >
-                  <span className={`material-icon ${item.role}`} style={materialThumbnailStyle(item.id)} aria-hidden="true" />
-                  <span className="material-copy"><b>{item.name}</b></span>
-                  <span className="material-count">×{count}</span>
-                </button>
-              );
-            })}
-          {Object.values(snapshot.inventory).every((count) => count === 0) && <p className="empty-inventory">物料已经用完，建议重试本关。</p>}
-        </div>
-      </aside>
     </section>
   );
 }
