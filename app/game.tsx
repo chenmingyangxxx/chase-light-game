@@ -34,8 +34,9 @@ const GOAL_REACH_HALF_WIDTH = 139;
 // Short grip holds inside each step keep the reduced speed feeling purposeful
 // instead of like a uniformly slowed video.
 const ROBOT_CLIMB_DURATION = 22000;
-const ROBOT_PLUCK_DURATION = 2200;
-const ACTIVATION_DURATION = ROBOT_CLIMB_DURATION + ROBOT_PLUCK_DURATION;
+// Give the final reach/grasp/hold enough screen time to read as an action,
+// rather than cutting to the ending film the instant 99 m is reached.
+const ROBOT_PLUCK_DURATION = 3200;
 const ROBOT_CLIMB_HEIGHT = 86;
 const ROBOT_PLUCK_HEIGHT = 91;
 const PHYSICS_MASS_PER_KG = 0.045;
@@ -54,6 +55,7 @@ const BACKDROP_BOTTOM = BASE_Y + 149;
 // former 84 px world-space margin made placed props appear to hover above the
 // foreground road in wide layouts.
 const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 24;
+const GROUND_VIEW_BOTTOM = WORLD_HEIGHT - VIEW_GROUND_CAMERA;
 const MIN_CAMERA_OFFSET = VIEW_GROUND_CAMERA - 20;
 // At maximum ascent the crane arm, basket, flower and tower crown all remain
 // inside the portrait viewport instead of being clipped above its top edge.
@@ -81,7 +83,7 @@ type ItemId =
   | "bicycle"
   | "chair";
 
-type GameStatus = "building" | "activating" | "cleared" | "failed";
+type GameStatus = "building" | "activating" | "plucking" | "cleared" | "failed";
 
 interface ArtSprite {
   asset: "junk-sprite-atlas.png" | "risky-props.png" | "monitor";
@@ -180,7 +182,37 @@ interface ClimbPoint {
   x: number;
   y: number;
   support: TaggedBody;
+  localX?: number;
+  localY?: number;
+  fixed?: boolean;
 }
+
+type RobotFrameBounds = readonly [left: number, top: number, right: number, bottom: number];
+
+// Alpha-footprint bounds for the supplied sequence strips. The original
+// frames have uneven transparent margins, so one generic 96% foot pivot makes
+// the last climb poses jump upward and the pluck strip wobble sideways.
+const ROBOT_CLIMB_FRAME_BOUNDS: readonly RobotFrameBounds[] = [
+  [41, 93, 345, 693],
+  [45, 80, 355, 693],
+  [44, 82, 362, 693],
+  [0, 79, 362, 693],
+  [0, 46, 338, 644],
+  [16, 17, 332, 578],
+];
+
+const ROBOT_PLUCK_FRAME_BOUNDS: readonly RobotFrameBounds[] = [
+  [108, 16, 318, 411],
+  [70, 27, 226, 412],
+  [36, 28, 354, 412],
+  [0, 29, 355, 412],
+  [0, 40, 159, 413],
+  [123, 28, 282, 396],
+  [78, 18, 276, 397],
+  [43, 16, 354, 397],
+  [0, 14, 355, 397],
+  [0, 8, 169, 397],
+];
 
 interface GameSnapshot {
   status: GameStatus;
@@ -719,6 +751,10 @@ class TowerPhysicsGame {
   private accumulator = 0;
   private lastUiUpdate = 0;
   private activationAt = 0;
+  private goalReachedAt = 0;
+  private activationRoute: ClimbPoint[] = [];
+  private frozenGoalAnchor: ClimbPoint | null = null;
+  private frozenClimbFrame = { frame: 0, nextFrame: 0, frameBlend: 0, flipX: false };
   private lastRobotAudioStep = -1;
   private frameId = 0;
   private cameraOffsetY = VIEW_GROUND_CAMERA;
@@ -911,6 +947,10 @@ class TowerPhysicsGame {
     this.stableElapsed = 0;
     this.collapseElapsed = 0;
     this.activationAt = 0;
+    this.goalReachedAt = 0;
+    this.activationRoute = [];
+    this.frozenGoalAnchor = null;
+    this.frozenClimbFrame = { frame: 0, nextFrame: 0, frameBlend: 0, flipX: false };
     this.lastRobotAudioStep = -1;
     this.hintIndex = 0;
     this.hintsLeft = 3;
@@ -1065,8 +1105,7 @@ class TowerPhysicsGame {
     const adjusted = this.adjusting;
     if (!adjusted) return false;
     Body.setStatic(adjusted.body, false);
-    adjusted.body.isSleeping = false;
-    adjusted.body.sleepCounter = 0;
+    Matter.Sleeping.set(adjusted.body, false);
     Body.setVelocity(adjusted.body, { x: 0, y: 0 });
     Body.setAngularVelocity(adjusted.body, 0);
     if (adjusted.body.gameItem) this.audio.place(adjusted.body.gameItem);
@@ -1134,10 +1173,9 @@ class TowerPhysicsGame {
     const delta = this.lastFrame ? Math.min(33, now - this.lastFrame) : 16.667;
     this.lastFrame = now;
     this.elapsed += delta;
-    // Reaching 99 m locks victory before another physics step can turn a valid
-    // arrival into a loss. Any collapse before this exact height still fails in
-    // updateSimulation below.
-    if (this.status === "activating" && this.robotHasReachedGoal()) this.finishClear();
+    // Reaching 99 m locks the result immediately, but the flower-picking beat
+    // is allowed to finish before the ending film replaces the game scene.
+    if (this.status === "activating" && this.robotHasReachedGoal()) this.lockVictory();
     if (this.status === "building" || this.status === "activating") {
       this.accumulator += delta;
       while (this.accumulator >= 16.667) {
@@ -1148,7 +1186,12 @@ class TowerPhysicsGame {
     } else {
       this.accumulator = 0;
     }
+    // A physics step may carry the robot across 99 m at the same instant that
+    // the stack starts to move. Lock the successful arrival before any later
+    // collapse test can report a contradictory failure for that same frame.
+    if (this.status === "activating" && this.robotHasReachedGoal()) this.lockVictory();
     this.updateSimulation(delta);
+    if (this.status === "plucking" && this.pluckProgress() >= 1) this.finishClear();
     this.render();
     if (now - this.lastUiUpdate > 110) {
       this.emit();
@@ -1290,7 +1333,7 @@ class TowerPhysicsGame {
     // currently carrying its feet/hands, then propagated through every lower
     // support just like the mass of the junk above it.
     if (this.status === "activating") {
-      const route = this.climbRoute();
+      const route = this.activeClimbRoute();
       if (route.length >= 2) {
         const support = this.robotClimbPose(route).anchor.support;
         carriedKg.set(
@@ -1404,8 +1447,24 @@ class TowerPhysicsGame {
 
   private activateLight() {
     if (this.status !== "building") return;
+    const route = this.climbRoute();
+    if (route.length < 2) return;
+    this.activationRoute = route.map((point) => {
+      if (point.fixed) return { ...point };
+      const offsetX = point.x - point.support.position.x;
+      const offsetY = point.y - point.support.position.y;
+      const cosine = Math.cos(-point.support.angle);
+      const sine = Math.sin(-point.support.angle);
+      return {
+        ...point,
+        localX: offsetX * cosine - offsetY * sine,
+        localY: offsetX * sine + offsetY * cosine,
+      };
+    });
     this.status = "activating";
     this.activationAt = this.elapsed;
+    this.goalReachedAt = 0;
+    this.frozenGoalAnchor = null;
     this.lastRobotAudioStep = -1;
     this.audio.climbStart();
     this.dynamicBodies.forEach((body) => Matter.Sleeping.set(body, false));
@@ -1417,19 +1476,50 @@ class TowerPhysicsGame {
     this.emit(true);
   }
 
-  private finishClear() {
+  private lockVictory() {
     if (this.status !== "activating") return;
+    const route = this.activeClimbRoute();
+    if (route.length < 2) return;
+    const pose = this.robotClimbPose(route);
+    this.goalReachedAt = this.elapsed;
+    this.frozenGoalAnchor = { ...pose.anchor, x: pose.anchor.x, y: pose.anchor.y };
+    this.frozenClimbFrame = {
+      frame: pose.frame,
+      nextFrame: pose.nextFrame,
+      frameBlend: pose.frameBlend,
+      flipX: pose.flipX,
+    };
+    this.status = "plucking";
+    // Once the robot reaches 99 m the result is locked. Freeze the tower at
+    // that valid instant so a later simulation step cannot create a false loss
+    // or make the top pose and camera shiver during the delicate pick-up.
+    this.dynamicBodies.forEach((body) => {
+      Body.setVelocity(body, { x: 0, y: 0 });
+      Body.setAngularVelocity(body, 0);
+      Matter.Sleeping.set(body, true);
+    });
+    this.message = "攀爬助手已抵达 99 米，正在摘取萌芽。";
+    this.emit(true);
+  }
+
+  private finishClear() {
+    if (this.status !== "plucking") return;
     this.status = "cleared";
-    this.message = "攀爬助手已抵达 99 米，胜利已经锁定。";
+    this.message = "萌芽已被轻轻摘取，通往光明的道路已经完成。";
     this.onClear();
     this.emit(true);
   }
 
   private robotHasReachedGoal() {
     if (this.status !== "activating") return false;
-    const route = this.climbRoute();
+    const route = this.activeClimbRoute();
     if (route.length < 2) return false;
     return this.robotClimbPose(route).anchor.y <= GOAL_REACH_Y;
+  }
+
+  private pluckProgress() {
+    if (this.status !== "plucking" && this.status !== "cleared") return 0;
+    return clamp((this.elapsed - this.goalReachedAt) / ROBOT_PLUCK_DURATION, 0, 1);
   }
 
   private fail(reason = "塔身失去支撑并整体倒塌。把宽重物件放在底部、让重心保持居中，再试一次，你一定能搭得更稳！") {
@@ -1480,7 +1570,7 @@ class TowerPhysicsGame {
 
   panCamera(screenDeltaY: number) {
     if (!Number.isFinite(screenDeltaY)) return;
-    if (this.status === "activating" || this.status === "cleared") return;
+    if (this.status === "activating" || this.status === "plucking" || this.status === "cleared") return;
     const rect = this.canvas.getBoundingClientRect();
     const virtualDelta = -screenDeltaY / Math.max(0.1, rect.height / WORLD_HEIGHT);
     const automatic = this.automaticCameraOffset();
@@ -1491,7 +1581,8 @@ class TowerPhysicsGame {
 
   private activationProgress() {
     if (this.status === "building" || this.status === "failed") return 0;
-    const route = this.climbRoute();
+    if (this.status === "plucking" || this.status === "cleared") return 1;
+    const route = this.activeClimbRoute();
     if (route.length < 2) return 0;
     const { anchor } = this.robotClimbPose(route);
     return clamp((BASE_Y - anchor.y) / (BASE_Y - GOAL_REACH_Y), 0, 1);
@@ -1533,9 +1624,9 @@ class TowerPhysicsGame {
     this.context.setTransform(dpr * scale, 0, 0, dpr * scale, -this.viewportWorldLeft * dpr * scale, 0);
     this.updateCamera();
 
-    const activating = this.status === "activating" || this.status === "cleared";
-    const illuminate = activating
-      ? clamp((this.elapsed - this.activationAt - ROBOT_CLIMB_DURATION - 900) / 1300, 0, 1)
+    const afterGoal = this.status === "plucking" || this.status === "cleared";
+    const illuminate = afterGoal
+      ? clamp((this.elapsed - this.goalReachedAt - 320) / 1450, 0, 1)
       : 0;
     this.context.save();
     this.context.translate(0, this.cameraOffsetY);
@@ -1552,8 +1643,9 @@ class TowerPhysicsGame {
   }
 
   private automaticCameraOffset() {
-    if (this.status === "activating" || this.status === "cleared") {
-      const route = this.climbRoute();
+    if (this.status === "plucking" || this.status === "cleared") return MAX_CAMERA_OFFSET;
+    if (this.status === "activating") {
+      const route = this.activeClimbRoute();
       if (route.length >= 2) {
         const { anchor } = this.robotClimbPose(route);
         const ascent = clamp((BASE_Y - anchor.y) / (BASE_Y - GOAL_REACH_Y), 0, 1);
@@ -1615,7 +1707,7 @@ class TowerPhysicsGame {
       this.drawResponsiveGroundDebris(this.artwork.debris);
       ctx.restore();
     }
-    this.drawGoalRig(this.activationProgress());
+    this.drawGoalRig(this.pluckProgress());
     this.drawGrowth(illuminate, this.elapsed);
 
   }
@@ -1720,24 +1812,18 @@ class TowerPhysicsGame {
     const ctx = this.context;
     const areaWidth = this.viewportWorldWidth;
     const areaHeight = BACKDROP_BOTTOM - BACKDROP_SKY_TOP;
-    // Portrait screens still use cover cropping. On desktop, map a wider field
-    // of view into the same world so the refinery remains background scale
-    // instead of competing with the real-size draggable props.
-    const sourceAspect = image.naturalWidth / image.naturalHeight;
-    const areaAspect = areaWidth / areaHeight;
-    let renderedWidth = areaWidth;
-    let renderedHeight = areaWidth / sourceAspect;
-    if (areaWidth >= WORLD_WIDTH * 1.3) {
-      renderedHeight = Math.max(WORLD_HEIGHT + 120, (areaWidth * 1.06) / sourceAspect);
-      renderedWidth = renderedHeight * sourceAspect;
-    } else if (areaAspect < sourceAspect) {
-      renderedHeight = areaHeight;
-      renderedWidth = areaHeight * sourceAspect;
-    }
-    // Ground remains pinned to the physical floor and the image now covers the
-    // sky range directly, so no generated extension or dark strip is needed.
+    // The authored road-contact line is locked to the Matter floor. Desktop
+    // and phone then share one world scale: wide screens reveal/crop the sides
+    // without ever changing the image's vertical size or pushing its ground
+    // below the physical landing plane.
+    const sourceGroundRatio = (BASE_Y - BACKDROP_SKY_TOP) / areaHeight;
+    const verticalScale = (BASE_Y - BACKDROP_SKY_TOP)
+      / Math.max(1, image.naturalHeight * sourceGroundRatio);
+    const backdropScale = Math.max(verticalScale, areaWidth / Math.max(1, image.naturalWidth));
+    const renderedWidth = image.naturalWidth * backdropScale;
+    const renderedHeight = image.naturalHeight * backdropScale;
     const renderedX = BASE_X - renderedWidth / 2;
-    const renderedY = BACKDROP_BOTTOM - renderedHeight;
+    const renderedY = BASE_Y - renderedHeight * sourceGroundRatio;
     ctx.save();
     ctx.beginPath();
     ctx.rect(this.viewportWorldLeft, BACKDROP_SKY_TOP, areaWidth, BACKDROP_BOTTOM - BACKDROP_SKY_TOP);
@@ -1754,7 +1840,10 @@ class TowerPhysicsGame {
     // of being stretched wider.
     const renderedHeight = 240;
     const renderedWidth = image.naturalWidth * (renderedHeight / image.naturalHeight);
-    const y = BACKDROP_BOTTOM - renderedHeight;
+    // Pin the decorative heaps to the visible viewport bottom, not to the
+    // longer background's off-screen tail. This keeps the full cutouts inside
+    // the canvas while the physical floor remains 24 world px above them.
+    const y = GROUND_VIEW_BOTTOM - renderedHeight;
     ctx.save();
     ctx.beginPath();
     ctx.rect(this.viewportWorldLeft, y, this.viewportWorldWidth, renderedHeight);
@@ -1828,7 +1917,7 @@ class TowerPhysicsGame {
     ctx.restore();
   }
 
-  private drawGoalRig(collectProgress: number) {
+  private drawGoalRig(pluckProgress: number) {
     const ctx = this.context;
     const basketX = GOAL_BASKET_X;
     const basketY = GOAL_BASKET_Y;
@@ -1858,6 +1947,42 @@ class TowerPhysicsGame {
     ctx.stroke();
     if (this.imageReady(this.artwork.goal)) {
       ctx.drawImage(this.artwork.goal, basketX - 77, basketY - 86, 154, 172);
+      if (pluckProgress >= 0.58) {
+        // The source basket has its flower baked into the photograph. Once the
+        // hand closes, replace that small centre area with matching soil and
+        // mesh so the same flower can travel with the robot instead of being
+        // visibly duplicated in the basket.
+        const removal = smoothStep((pluckProgress - 0.58) / 0.1);
+        ctx.save();
+        ctx.globalAlpha = removal;
+        const basketPatch = ctx.createLinearGradient(0, basketY + 7, 0, basketY + 54);
+        basketPatch.addColorStop(0, "rgba(47, 39, 28, 0.98)");
+        basketPatch.addColorStop(1, "rgba(39, 27, 17, 0.99)");
+        ctx.fillStyle = basketPatch;
+        ctx.fillRect(basketX - 22, basketY + 7, 44, 48);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(basketX - 22, basketY + 7, 44, 48);
+        ctx.clip();
+        ctx.strokeStyle = "rgba(117, 101, 73, 0.52)";
+        ctx.lineWidth = 0.8;
+        for (let line = -42; line <= 42; line += 12) {
+          ctx.beginPath();
+          ctx.moveTo(basketX + line, basketY + 6);
+          ctx.lineTo(basketX + line + 42, basketY + 56);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(basketX + line + 42, basketY + 6);
+          ctx.lineTo(basketX + line, basketY + 56);
+          ctx.stroke();
+        }
+        ctx.restore();
+        ctx.fillStyle = "rgba(57, 39, 20, 0.98)";
+        ctx.beginPath();
+        ctx.ellipse(basketX, basketY + 48, 22, 7, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     } else {
       ctx.strokeStyle = "rgba(137, 133, 100, 0.92)";
       ctx.lineWidth = 3;
@@ -1895,10 +2020,9 @@ class TowerPhysicsGame {
     ctx.beginPath();
     ctx.arc(basketX + ropeSway, ropeEndY + 3, 4.5, 0, Math.PI * 2);
     ctx.fill();
-    const collectStart = ROBOT_CLIMB_DURATION / ACTIVATION_DURATION;
-    if (collectProgress > collectStart) {
+    if (pluckProgress > 0) {
       const glow = ctx.createRadialGradient(basketX, basketY - 51, 1, basketX, basketY - 51, 24);
-      glow.addColorStop(0, `rgba(211, 243, 150, ${Math.min(0.35, (collectProgress - collectStart) * 2.2)})`);
+      glow.addColorStop(0, `rgba(211, 243, 150, ${Math.min(0.35, pluckProgress * 0.6)})`);
       glow.addColorStop(1, "rgba(211, 243, 150, 0)");
       ctx.fillStyle = glow;
       ctx.beginPath();
@@ -1912,7 +2036,7 @@ class TowerPhysicsGame {
     this.dynamicBodies.forEach((body) => this.drawItem(body));
     if (this.held) this.drawGhost(this.held);
 
-    if (this.status === "activating" || this.status === "cleared") {
+    if (this.status === "activating" || this.status === "plucking" || this.status === "cleared") {
       // The scene itself cross-fades from polluted to revived. A previous
       // fixed-width yellow wash exposed hard vertical edges on wide screens
       // and made the transition feel artificial, so the colour block is gone.
@@ -1923,40 +2047,79 @@ class TowerPhysicsGame {
   private drawSuccessRobot() {
     const basketX = GOAL_BASKET_X;
     const basketY = GOAL_BASKET_Y;
-    const route = this.climbRoute();
+    const route = this.activeClimbRoute();
     if (route.length < 2) return;
     const pose = this.robotClimbPose(route);
 
-    // The six-frame climb is 30% larger, with each reach/pull beat tied to a
-    // physical route segment and shared with the load simulation below.
-    const transition = smoothStep((pose.sequenceElapsed - (ROBOT_CLIMB_DURATION - 500)) / 700);
-    this.drawRobotFrame(
-      this.artwork.robotClimb,
-      6,
-      1,
-      pose.frame,
-      pose.anchor.x,
-      pose.anchor.y + 7,
-      ROBOT_CLIMB_HEIGHT,
-      1 - transition,
+    const pluckProgress = this.pluckProgress();
+    if (this.status === "activating") {
+      this.drawRobotFrameBlend(
+        this.artwork.robotClimb,
+        6,
+        1,
+        pose.frame,
+        pose.nextFrame,
+        pose.frameBlend,
+        pose.anchor.x,
+        pose.anchor.y + 7,
+        ROBOT_CLIMB_HEIGHT,
+        ROBOT_CLIMB_FRAME_BOUNDS,
+        pose.flipX,
+      );
+      return;
+    }
+
+    // At 99 m the result is already safe. Keep one fully opaque character on
+    // screen: first settle the cached climbing pose onto the basket, then hand
+    // over to the dedicated ten-frame reach-and-grasp strip.
+    const settleEnd = 0.16;
+    const transition = smoothStep(pluckProgress / settleEnd);
+    const startAnchor = this.frozenGoalAnchor ?? pose.anchor;
+    const finalAnchor = { x: basketX - 30, y: basketY + 31 };
+    const robotX = startAnchor.x + (finalAnchor.x - startAnchor.x) * transition;
+    const robotFootY = startAnchor.y + 7 + (finalAnchor.y - (startAnchor.y + 7)) * transition;
+
+    if (pluckProgress < settleEnd) {
+      this.drawRobotFrameBlend(
+        this.artwork.robotClimb,
+        6,
+        1,
+        this.frozenClimbFrame.frame,
+        this.frozenClimbFrame.nextFrame,
+        this.frozenClimbFrame.frameBlend,
+        robotX,
+        robotFootY,
+        ROBOT_CLIMB_HEIGHT,
+        ROBOT_CLIMB_FRAME_BOUNDS,
+        this.frozenClimbFrame.flipX,
+      );
+      return;
+    }
+
+    const actionProgress = smoothStep(clamp((pluckProgress - settleEnd) / (1 - settleEnd), 0, 1));
+    const pluckFramePosition = actionProgress * 9;
+    const pluckFrame = Math.floor(pluckFramePosition);
+    const nextPluckFrame = Math.min(9, pluckFrame + 1);
+    this.drawRobotFrameBlend(
+      this.artwork.robotPluck,
+      5,
+      2,
+      pluckFrame,
+      nextPluckFrame,
+      pluckFramePosition - pluckFrame,
+      robotX,
+      robotFootY,
+      ROBOT_PLUCK_HEIGHT,
+      ROBOT_PLUCK_FRAME_BOUNDS,
+      false,
     );
 
-    if (transition <= 0) return;
-
-    // At the basket the ten-frame picking sequence takes over. The first frame
-    // cross-fades with the climb cycle so there is no visual pop between the
-    // two independently extracted action strips.
-    const pluckProgress = smoothStep((pose.sequenceElapsed - ROBOT_CLIMB_DURATION) / ROBOT_PLUCK_DURATION);
-    const pluckFrame = Math.min(9, Math.floor(pluckProgress * 10));
-    const finalAnchor = { x: basketX - 30, y: basketY + 31 };
-    this.drawRobotFrame(this.artwork.robotPluck, 5, 2, pluckFrame, finalAnchor.x, finalAnchor.y, ROBOT_PLUCK_HEIGHT, transition);
-
-    if (pluckProgress < 0.72) return;
-    const collect = smoothStep((pluckProgress - 0.72) / 0.28);
+    if (pluckProgress < 0.58) return;
+    const collect = smoothStep((pluckProgress - 0.58) / 0.42);
     this.drawCollectedSprout(
-      basketX - 5 - collect * 11,
-      basketY - 50 + collect * 16,
-      0.48 + collect * 0.08,
+      basketX - 2 + (robotX + 14 - (basketX - 2)) * collect,
+      basketY + 23 + (robotFootY - ROBOT_PLUCK_HEIGHT * 0.79 - (basketY + 23)) * collect,
+      0.45 + collect * 0.1,
     );
   }
 
@@ -1968,27 +2131,40 @@ class TowerPhysicsGame {
     const localStep = routePosition - routeIndex;
     const from = route[routeIndex] ?? route[0];
     const to = route[routeIndex + 1] ?? from;
-    // Hold the current grip briefly, pull through the middle of the motion,
-    // then settle both feet before starting the next reach. This removes the
-    // old constant-rate floating sensation at the slower climb speed.
-    const actionStep = clamp((localStep - 0.12) / 0.76, 0, 1);
-    const travel = smoothStep(actionStep);
+    // Each hold now has a full reach-and-pull cycle: the hands extend while
+    // the feet stay planted, the torso rises after the grip, then both feet
+    // settle before the next hold. Reversing the six-frame strip through the
+    // pull phase avoids the old 5 -> 2 hard jump at every route boundary.
+    const reach = localStep <= 0.48
+      ? smoothStep(localStep / 0.48)
+      : smoothStep((1 - localStep) / 0.52);
+    const travel = localStep < 0.38
+      ? smoothStep(localStep / 0.38) * 0.14
+      : 0.14 + smoothStep((localStep - 0.38) / 0.62) * 0.86;
+    const lateralDirection = Math.sign(to.x - from.x) || (routeIndex % 2 === 0 ? 1 : -1);
     const anchor: ClimbPoint = {
-      x: from.x + (to.x - from.x) * travel,
-      y: from.y + (to.y - from.y) * travel - Math.sin(actionStep * Math.PI) * 3.4,
+      x: from.x + (to.x - from.x) * travel + Math.sin(localStep * Math.PI) * lateralDirection * 1.7,
+      y: from.y + (to.y - from.y) * travel - Math.sin(localStep * Math.PI) * 1.35,
       support: localStep < 0.52 ? from.support : to.support,
     };
-    const frameProgress = clamp((localStep - 0.05) / 0.9, 0, 0.999);
-    const frame = climb >= 0.995
-      ? 5
-      : routeIndex === 0
-        ? Math.min(5, Math.floor(frameProgress * 6))
-        : 2 + Math.min(3, Math.floor(frameProgress * 4));
-    return { anchor, climb, frame, routePosition, routeIndex, sequenceElapsed };
+    const framePosition = clamp(reach * 5, 0, 5);
+    const frame = Math.floor(framePosition);
+    const nextFrame = Math.min(5, frame + 1);
+    return {
+      anchor,
+      climb,
+      frame,
+      nextFrame,
+      frameBlend: framePosition - frame,
+      flipX: routeIndex % 2 === 1,
+      routePosition,
+      routeIndex,
+      sequenceElapsed,
+    };
   }
 
   private applyRobotWeight() {
-    const route = this.climbRoute();
+    const route = this.activeClimbRoute();
     if (route.length < 2) return;
     const pose = this.robotClimbPose(route);
     const support = pose.anchor.support;
@@ -2020,29 +2196,88 @@ class TowerPhysicsGame {
     centerX: number,
     footY: number,
     targetHeight: number,
+    frameBounds: readonly RobotFrameBounds[],
+    flipX = false,
     alpha = 1,
   ) {
     if (!sheet.complete || sheet.naturalWidth <= 0 || alpha <= 0) return;
-    const cellWidth = sheet.naturalWidth / columns;
-    const cellHeight = sheet.naturalHeight / rows;
     const column = frame % columns;
     const row = Math.floor(frame / columns);
-    const drawWidth = targetHeight * (cellWidth / cellHeight);
+    const sourceLeft = Math.round((column * sheet.naturalWidth) / columns);
+    const sourceRight = Math.round(((column + 1) * sheet.naturalWidth) / columns);
+    const sourceTop = Math.round((row * sheet.naturalHeight) / rows);
+    const sourceBottom = Math.round(((row + 1) * sheet.naturalHeight) / rows);
+    const cellWidth = sourceRight - sourceLeft;
+    const cellHeight = sourceBottom - sourceTop;
+    const [boundLeft, , boundRight, boundBottom] = frameBounds[frame]
+      ?? [0, 0, cellWidth, cellHeight * 0.96];
+    const frameScale = targetHeight / cellHeight;
+    const artworkCenterX = (boundLeft + boundRight) / 2;
     const ctx = this.context;
     ctx.save();
     ctx.globalAlpha = clamp(alpha, 0, 1);
+    ctx.translate(centerX, 0);
+    if (flipX) ctx.scale(-1, 1);
     ctx.drawImage(
       sheet,
-      column * cellWidth,
-      row * cellHeight,
+      sourceLeft,
+      sourceTop,
       cellWidth,
       cellHeight,
-      centerX - drawWidth / 2,
-      footY - targetHeight * 0.96,
-      drawWidth,
+      -artworkCenterX * frameScale,
+      footY - boundBottom * frameScale,
+      cellWidth * frameScale,
       targetHeight,
     );
     ctx.restore();
+  }
+
+  private drawRobotFrameBlend(
+    sheet: HTMLImageElement,
+    columns: number,
+    rows: number,
+    frame: number,
+    nextFrame: number,
+    blend: number,
+    centerX: number,
+    footY: number,
+    targetHeight: number,
+    frameBounds: readonly RobotFrameBounds[],
+    flipX = false,
+    alpha = 1,
+  ) {
+    const amount = smoothStep(clamp(blend, 0, 1));
+    // The supplied frames are complete photographic cut-outs, not separately
+    // rigged limbs. Alpha-blending two distant full-body silhouettes makes the
+    // robot look transparent. Select the nearest full-opacity pose instead;
+    // the continuously interpolated contact path supplies the smooth motion.
+    const selectedFrame = amount < 0.5 ? frame : nextFrame;
+    this.drawRobotFrame(
+      sheet,
+      columns,
+      rows,
+      selectedFrame,
+      centerX,
+      footY,
+      targetHeight,
+      frameBounds,
+      flipX,
+      alpha,
+    );
+  }
+
+  private activeClimbRoute() {
+    if (this.activationRoute.length < 2) return this.climbRoute();
+    return this.activationRoute.map((point) => {
+      if (point.fixed || point.localX === undefined || point.localY === undefined) return point;
+      const cosine = Math.cos(point.support.angle);
+      const sine = Math.sin(point.support.angle);
+      return {
+        ...point,
+        x: point.support.position.x + point.localX * cosine - point.localY * sine,
+        y: point.support.position.y + point.localX * sine + point.localY * cosine,
+      };
+    });
   }
 
   private climbRoute() {
@@ -2079,6 +2314,7 @@ class TowerPhysicsGame {
           x: from.x + (target.x - from.x) * amount,
           y: from.y + (target.y - from.y) * amount,
           support: target.support,
+          fixed: target.fixed,
         });
       }
     };
@@ -2104,9 +2340,9 @@ class TowerPhysicsGame {
     // basket frame itself, giving the robot a believable path to the flower.
     const topSupport = ordered[ordered.length - 1];
     [
-      { x: GOAL_BASKET_X - 44, y: GOAL_REACH_Y - 4, support: topSupport },
-      { x: GOAL_BASKET_X - 42, y: GOAL_BASKET_Y + 58, support: topSupport },
-      { x: GOAL_BASKET_X - 38, y: GOAL_BASKET_Y + 32, support: topSupport },
+      { x: GOAL_BASKET_X - 44, y: GOAL_REACH_Y - 4, support: topSupport, fixed: true },
+      { x: GOAL_BASKET_X - 42, y: GOAL_BASKET_Y + 58, support: topSupport, fixed: true },
+      { x: GOAL_BASKET_X - 38, y: GOAL_BASKET_Y + 32, support: topSupport, fixed: true },
     ].forEach(appendSegment);
     return route;
   }
@@ -2522,9 +2758,9 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               <button className="stage-action exit-action" type="button" onClick={() => { audio.ui(); setConfirmation("exit"); }}>退出</button>
             </div>
           )}
-          {snapshot.status === "activating" && (
+          {(snapshot.status === "activating" || snapshot.status === "plucking") && (
             <div className="activation-strip" aria-live="polite">
-              <span>机器人攀爬中</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
+              <span>{snapshot.status === "plucking" ? "正在摘取萌芽" : "机器人攀爬中"}</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
             </div>
           )}
           <aside className="inventory-panel panel" aria-label="垃圾物品列表">
@@ -2655,7 +2891,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 <>
                   <img
                     className="ending-epilogue-background"
-                    src="/assets/ending-epilogue-og.png"
+                    src="/assets/ending-epilogue-og2.png"
                     alt="阳光重返废墟，新生命在城市中生长"
                   />
                   <div className="ending-wordmark" aria-label="追光">
