@@ -692,6 +692,7 @@ class TowerPhysicsGame {
   private readonly artwork: Record<
     | "polluted"
     | "pollutedWide"
+    | "pollutedSky"
     | "revived"
     | "revivedWide"
     | "junk"
@@ -728,6 +729,7 @@ class TowerPhysicsGame {
       // the mobile composition.
       polluted: this.loadArtwork("/assets/wasteland-flat-polluted.png"),
       pollutedWide: this.loadArtwork("/assets/wasteland-expanded-polluted-v6.png"),
+      pollutedSky: this.loadArtwork("/assets/wasteland-polluted-sky-extension-v1.png"),
       revived: this.loadArtwork("/assets/wasteland-flat-revived.png"),
       revivedWide: this.loadArtwork("/assets/wasteland-expanded-revived-v6.png"),
       // The same orthographic asset sheets are used both in the inventory and
@@ -1555,6 +1557,9 @@ class TowerPhysicsGame {
     const revived = this.artwork.revived;
 
     this.drawFallbackSky(illuminate);
+    if (this.imageReady(this.artwork.pollutedSky)) {
+      this.drawSkyExtension(this.artwork.pollutedSky);
+    }
     if (this.imageReady(polluted)) {
       ctx.globalAlpha = 0.96;
       this.drawLongBackdrop(polluted, this.artwork.pollutedWide);
@@ -1708,6 +1713,24 @@ class TowerPhysicsGame {
     ctx.beginPath();
     ctx.rect(this.viewportWorldLeft, BACKDROP_SKY_TOP, areaWidth, BACKDROP_BOTTOM - BACKDROP_SKY_TOP);
     ctx.clip();
+    ctx.drawImage(image, renderedX, renderedY, renderedWidth, renderedHeight);
+    ctx.restore();
+  }
+
+  private drawSkyExtension(image: HTMLImageElement) {
+    const ctx = this.context;
+    const areaWidth = this.viewportWorldWidth;
+    const areaHeight = BACKDROP_TOP - BACKDROP_SKY_TOP + 28;
+    const scale = Math.max(areaWidth / image.naturalWidth, areaHeight / image.naturalHeight);
+    const renderedWidth = image.naturalWidth * scale;
+    const renderedHeight = image.naturalHeight * scale;
+    const renderedX = BASE_X - renderedWidth / 2;
+    const renderedY = BACKDROP_SKY_TOP + (areaHeight - renderedHeight) / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(this.viewportWorldLeft, BACKDROP_SKY_TOP, areaWidth, areaHeight);
+    ctx.clip();
+    ctx.globalAlpha = 0.94;
     ctx.drawImage(image, renderedX, renderedY, renderedWidth, renderedHeight);
     ctx.restore();
   }
@@ -2594,6 +2617,11 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               )}
               {endingComplete && (
                 <>
+                  <img
+                    className="ending-epilogue-background"
+                    src="/assets/ending-epilogue-og.png"
+                    alt="阳光重返废墟，新生命在城市中生长"
+                  />
                   <div className="ending-wordmark" aria-label="追光">
                     <img src="/assets/chase-light-brush-wordmark.png" alt="追光" />
                     <p>以心筑塔，向光而生</p>
