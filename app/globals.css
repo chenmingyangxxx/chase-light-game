@@ -615,7 +615,7 @@ body {
   opacity: 0;
   filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.5));
   transform: translate(-50%, -46%) scale(0.985);
-  animation: ending-wordmark-in 1.8s 1.65s cubic-bezier(.22, .7, .2, 1) forwards;
+  animation: ending-wordmark-in 1.8s 3.15s cubic-bezier(.22, .7, .2, 1) forwards;
 }
 .ending-wordmark img {
   display: block;
@@ -654,7 +654,7 @@ body {
   letter-spacing: .12em;
   backdrop-filter: blur(8px);
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
-  animation: ending-control-in 700ms 2.4s ease forwards;
+  animation: ending-control-in 700ms 3.65s ease forwards;
 }
 .ending-home-button:hover { border-color: rgba(231, 244, 209, 0.62); background: rgba(28, 55, 48, 0.9); transform: translateY(-2px); }
 .ending-home-button:active { transform: translateY(0); }
@@ -1200,16 +1200,18 @@ body {
   border-radius: 50%;
   animation: launch-spin 1.15s linear infinite;
 }
-.scene-loading-visual img {
+.scene-loading-percent {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 32px;
-  height: 44px;
-  object-fit: cover;
-  object-position: center 58%;
-  opacity: .78;
-  filter: grayscale(1) brightness(1.65);
+  color: rgba(239, 245, 232, .9);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: .02em;
+  line-height: 1;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, .7);
   transform: translate(-50%, -50%);
 }
 .scene-loading-screen strong,

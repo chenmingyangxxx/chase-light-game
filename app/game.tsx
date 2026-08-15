@@ -2677,6 +2677,7 @@ export function DawnTowerGame() {
   const [guideOpen, setGuideOpen] = useState(false);
   const [launchLeaving, setLaunchLeaving] = useState(false);
   const [sceneLoading, setSceneLoading] = useState(false);
+  const [sceneLoadProgress, setSceneLoadProgress] = useState(0);
 
   const ensureAutomaticSound = async () => {
     try {
@@ -2720,11 +2721,19 @@ export function DawnTowerGame() {
     }
     fadeOutLaunchMusic();
     window.setTimeout(() => {
+      setSceneLoadProgress(0);
       setSceneLoading(true);
+      const progressTimer = window.setInterval(() => {
+        setSceneLoadProgress((value) => Math.min(94, value + (value < 60 ? 11 : 5)));
+      }, 70);
       window.setTimeout(() => {
-        setStarted(true);
-        setSceneLoading(false);
-        setLaunchLeaving(false);
+        window.clearInterval(progressTimer);
+        setSceneLoadProgress(100);
+        window.setTimeout(() => {
+          setStarted(true);
+          setSceneLoading(false);
+          setLaunchLeaving(false);
+        }, 140);
       }, 820);
     }, 620);
   };
@@ -2764,10 +2773,10 @@ export function DawnTowerGame() {
     const ready = loading >= 100;
     if (sceneLoading) {
       return (
-        <main className="scene-loading-screen" aria-live="polite" aria-label="正在进入游戏场景">
+        <main className="scene-loading-screen" aria-live="polite" aria-label={`正在进入游戏场景 ${sceneLoadProgress}%`}>
           <div className="scene-loading-visual" aria-hidden="true">
             <span className="scene-loading-ring" />
-            <img src="/assets/pursue-light-hook-logo-thin-clean.png" alt="" />
+            <b className="scene-loading-percent">{sceneLoadProgress}%</b>
           </div>
           <strong>正在进入废土</strong>
           <span>光在 99 米之上</span>
