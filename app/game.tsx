@@ -1678,7 +1678,7 @@ export function DawnTowerGame() {
         )}
         <section className="launch-content">
           <div className="launch-brand">
-            <img className="launch-emblem" src="/assets/pursue-light-hook-logo.png" alt="" />
+            <img className="launch-emblem" src="/assets/pursue-light-hook-logo-thin-cable.png" alt="" />
             <h1 id="launch-title" className="launch-wordmark" aria-label="追.光">
               <img src="/assets/chase-light-brush-wordmark.png" alt="" />
               <i aria-hidden="true">.</i>
@@ -1691,7 +1691,7 @@ export function DawnTowerGame() {
             {ready && (
               <button className="launch-start" type="button" onClick={() => setStarted(true)}>
                 <span className="launch-start-mark" aria-hidden="true">✦</span>
-                开始游戏
+                <span className="launch-start-label">开始游戏</span>
                 <span className="launch-start-mark" aria-hidden="true">✦</span>
               </button>
             )}
