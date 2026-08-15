@@ -8,10 +8,16 @@ const { Bodies, Body, Composite, Engine, World } = Matter;
 const WORLD_WIDTH = 1000;
 const WORLD_HEIGHT = 700;
 const BASE_X = 500;
-const BASE_Y = 590;
-const PIXELS_PER_METER = 5;
+// The simulation is a tall world: the 99 m ruler spans 990 virtual pixels and
+// can be inspected by panning, rather than being compressed into one viewport.
+const BASE_Y = 1260;
+const PIXELS_PER_METER = 10;
 const RECOVERY_Y = BASE_Y + 94;
-const MAX_CAMERA_LIFT = 148;
+const BACKDROP_TOP = -260;
+const BACKDROP_BOTTOM = BASE_Y + 124;
+const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 60;
+const MIN_CAMERA_OFFSET = VIEW_GROUND_CAMERA - 14;
+const MAX_CAMERA_OFFSET = 170 - (BASE_Y - 99 * PIXELS_PER_METER);
 
 type Shape = "box" | "circle";
 type ItemRole = "foundation" | "bridge" | "block" | "tall" | "risky";
@@ -248,6 +254,14 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
   },
 };
 
+// Keep displayed prop dimensions close to their physical collision footprint.
+// The original scale was too small to make a recognisable, readable tower.
+const PROP_SCALE = 1.35;
+Object.values(ITEMS).forEach((item) => {
+  item.width = Math.round(item.width * PROP_SCALE);
+  item.height = Math.round(item.height * PROP_SCALE);
+});
+
 const LEVELS: LevelConfig[] = [
   { id: 1, target: 8, title: "枯竭广场", subtitle: "从任何地面位置开始搭建。", baseWidth: 356, wind: 0, targetOffset: 0, inventory: ["pallet", "crate", "crate", "beam", "tire", "computer"], hintItems: ["pallet", "crate", "beam"] },
   { id: 2, target: 12, title: "废弃街角", subtitle: "先加宽底座，再继续加高。", baseWidth: 334, wind: 0, targetOffset: 0, inventory: ["pallet", "pallet", "crate", "fridge", "computer", "tire", "chair"], hintItems: ["pallet", "crate", "fridge"] },
@@ -319,9 +333,11 @@ class TowerPhysicsGame {
   private lastUiUpdate = 0;
   private activationAt = 0;
   private frameId = 0;
-  private cameraOffsetY = 0;
+  private cameraOffsetY = VIEW_GROUND_CAMERA;
+  private cameraManualOffsetY = 0;
+  private panning: { pointerId: number; lastClientY: number } | null = null;
   private baseBody: Matter.Body | null = null;
-  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "robot", HTMLImageElement>;
+  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "robot" | "moon", HTMLImageElement>;
 
   constructor(canvas: HTMLCanvasElement, level: LevelConfig, onUpdate: (snapshot: GameSnapshot) => void, onClear: () => void) {
     const context = canvas.getContext("2d");
@@ -336,9 +352,12 @@ class TowerPhysicsGame {
     this.artwork = {
       polluted: this.loadArtwork("/assets/wasteland-flat-polluted.png"),
       revived: this.loadArtwork("/assets/wasteland-flat-revived.png"),
-      junk: this.loadArtwork("/assets/junk-sprite-atlas.png"),
-      risky: this.loadArtwork("/assets/risky-props.png"),
+      // The same orthographic asset sheets are used both in the inventory and
+      // in the physical world so a placed object keeps its front-facing form.
+      junk: this.loadArtwork("/assets/front-prop-atlas.png"),
+      risky: this.loadArtwork("/assets/front-risky-props.png"),
       robot: this.loadArtwork("/assets/lumina-r07-compact.png"),
+      moon: this.loadArtwork("/assets/artificial-moon-lamp.png"),
     };
     this.createWorld();
   }
@@ -371,6 +390,7 @@ class TowerPhysicsGame {
 
   startHolding(itemId: ItemId, clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building" || this.inventory[itemId] <= 0) return;
+    this.panning = null;
     this.releaseAdjustedBody();
     const point = this.clientToWorld(clientX, clientY);
     this.held = { itemId, x: point.x, y: point.y, angle: 0, pointerId };
@@ -394,7 +414,10 @@ class TowerPhysicsGame {
       && point.y >= candidate.bounds.min.y
       && point.y <= candidate.bounds.max.y,
     );
-    if (!body) return;
+    if (!body) {
+      this.panning = { pointerId, lastClientY: clientY };
+      return;
+    }
     this.adjusting = {
       body,
       pointerId,
@@ -456,7 +479,9 @@ class TowerPhysicsGame {
     this.hintIndex = 0;
     this.hintsLeft = 3;
     this.activeHint = null;
-    this.cameraOffsetY = 0;
+    this.cameraOffsetY = VIEW_GROUND_CAMERA;
+    this.cameraManualOffsetY = 0;
+    this.panning = null;
     this.message = "已重置本关。物料和 3 次提示已恢复。";
     Composite.clear(this.engine.world, false, true);
     Engine.clear(this.engine);
@@ -498,8 +523,14 @@ class TowerPhysicsGame {
     const holding = this.held?.pointerId === event.pointerId;
     const adjusted = this.adjusting;
     const movingBody = adjusted?.pointerId === event.pointerId;
-    if (!holding && !movingBody) return;
+    const panning = this.panning?.pointerId === event.pointerId;
+    if (!holding && !movingBody && !panning) return;
     event.preventDefault();
+    if (panning && this.panning) {
+      this.panCamera(event.clientY - this.panning.lastClientY);
+      this.panning.lastClientY = event.clientY;
+      return;
+    }
     const point = this.clientToWorld(event.clientX, event.clientY);
     if (holding && this.held) {
       this.held.x = point.x;
@@ -517,6 +548,11 @@ class TowerPhysicsGame {
   };
 
   private readonly onPointerUp = (event: PointerEvent) => {
+    if (this.panning?.pointerId === event.pointerId) {
+      event.preventDefault();
+      this.panning = null;
+      return;
+    }
     if (this.adjusting?.pointerId === event.pointerId) {
       event.preventDefault();
       const itemName = this.adjusting.body.gameItem?.name ?? "物件";
@@ -539,6 +575,11 @@ class TowerPhysicsGame {
   };
 
   private readonly onPointerCancel = (event: PointerEvent) => {
+    if (this.panning?.pointerId === event.pointerId) {
+      event.preventDefault();
+      this.panning = null;
+      return;
+    }
     if (this.adjusting?.pointerId === event.pointerId) {
       event.preventDefault();
       this.cancelHeld();
@@ -796,6 +837,16 @@ class TowerPhysicsGame {
     };
   }
 
+  panCamera(screenDeltaY: number) {
+    if (!Number.isFinite(screenDeltaY)) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const virtualDelta = -screenDeltaY / Math.max(0.1, rect.height / WORLD_HEIGHT);
+    const automatic = this.automaticCameraOffset();
+    const next = clamp(automatic + this.cameraManualOffsetY + virtualDelta, MIN_CAMERA_OFFSET, MAX_CAMERA_OFFSET);
+    this.cameraManualOffsetY = next - automatic;
+    this.cameraOffsetY = next;
+  }
+
   private activationProgress() {
     if (this.status === "building" || this.status === "failed") return 0;
     return clamp((this.elapsed - this.activationAt) / 4100, 0, 1);
@@ -844,11 +895,16 @@ class TowerPhysicsGame {
   }
 
   private updateCamera() {
-    // Higher towers pull the view upward, while leaving enough of the ground visible to keep placement readable.
-    const targetLift = clamp((Math.max(0, this.height) - 8) * 1.55, 0, MAX_CAMERA_LIFT);
-    const easing = targetLift > this.cameraOffsetY ? 0.075 : 0.12;
-    this.cameraOffsetY += (targetLift - this.cameraOffsetY) * easing;
-    if (Math.abs(targetLift - this.cameraOffsetY) < 0.05) this.cameraOffsetY = targetLift;
+    const target = clamp(this.automaticCameraOffset() + this.cameraManualOffsetY, MIN_CAMERA_OFFSET, MAX_CAMERA_OFFSET);
+    const easing = target > this.cameraOffsetY ? 0.075 : 0.12;
+    this.cameraOffsetY += (target - this.cameraOffsetY) * easing;
+    if (Math.abs(target - this.cameraOffsetY) < 0.05) this.cameraOffsetY = target;
+  }
+
+  private automaticCameraOffset() {
+    // Follow a growing tower, but preserve the player's manual pan to inspect
+    // any section of the complete 0–99 m ruler.
+    return clamp(VIEW_GROUND_CAMERA + clamp(this.height, 0, 99) * 5.2, MIN_CAMERA_OFFSET, MAX_CAMERA_OFFSET);
   }
 
   private imageReady(image: HTMLImageElement) {
@@ -857,12 +913,12 @@ class TowerPhysicsGame {
 
   private getLightRig(): LightRig {
     const goalY = BASE_Y - this.level.target * PIXELS_PER_METER;
-    const lampY = clamp(goalY - 61, 48, BASE_Y - 61);
+    const lampY = clamp(goalY - 94, BACKDROP_TOP + 108, BASE_Y - 94);
     return {
       x: BASE_X + this.level.targetOffset,
       goalY,
       lampY,
-      ropeStartY: lampY + 20,
+      ropeStartY: lampY + 54,
       ropeEndY: goalY - 3,
     };
   }
@@ -871,8 +927,8 @@ class TowerPhysicsGame {
     const ctx = this.context;
     const polluted = this.artwork.polluted;
     const revived = this.artwork.revived;
-    const backdropTop = -MAX_CAMERA_LIFT;
-    const backdropHeight = WORLD_HEIGHT + MAX_CAMERA_LIFT;
+    const backdropTop = BACKDROP_TOP;
+    const backdropHeight = BACKDROP_BOTTOM - BACKDROP_TOP;
 
     ctx.fillStyle = "#101b1d";
     ctx.fillRect(0, backdropTop, WORLD_WIDTH, backdropHeight);
@@ -914,12 +970,12 @@ class TowerPhysicsGame {
 
   private drawFallbackSky(illuminate: number) {
     const ctx = this.context;
-    const sky = ctx.createLinearGradient(0, -MAX_CAMERA_LIFT, 0, WORLD_HEIGHT);
+    const sky = ctx.createLinearGradient(0, BACKDROP_TOP, 0, BACKDROP_BOTTOM);
     sky.addColorStop(0, colorMix([26, 46, 49], [99, 177, 195], illuminate));
     sky.addColorStop(0.62, colorMix([47, 63, 60], [201, 227, 192], illuminate));
     sky.addColorStop(1, colorMix([67, 71, 63], [111, 166, 97], illuminate));
     ctx.fillStyle = sky;
-    ctx.fillRect(0, -MAX_CAMERA_LIFT, WORLD_WIDTH, WORLD_HEIGHT + MAX_CAMERA_LIFT);
+    ctx.fillRect(0, BACKDROP_TOP, WORLD_WIDTH, BACKDROP_BOTTOM - BACKDROP_TOP);
   }
 
   private drawGrowth(illuminate: number, now: number) {
@@ -932,7 +988,7 @@ class TowerPhysicsGame {
     for (let x = 18; x < WORLD_WIDTH; x += 27) {
       const progress = clamp((illuminate - ((x % 95) / 1600)) * 1.4, 0, 1);
       if (progress <= 0) continue;
-      const baseY = RECOVERY_Y + 10;
+      const baseY = BASE_Y + 10;
       const stem = 5 + progress * 11;
       const sway = Math.sin((x + now / 12) / 31) * 3;
       ctx.beginPath();
@@ -952,15 +1008,54 @@ class TowerPhysicsGame {
   private drawLightRig(rig: LightRig, illuminate: number, pullProgress: number) {
     const ctx = this.context;
     const ropeEndY = rig.ropeEndY + pullProgress * 9;
+    const moonSize = 116;
+    const trussTop = rig.lampY - 99;
+    const trussBottom = trussTop + 48;
+    const trussEnd = rig.x - 18;
     ctx.save();
-    ctx.strokeStyle = "rgba(32, 43, 44, 0.84)";
+
+    // Left-wall cantilever: two steel chords and repeating braces form a
+    // lightweight industrial gantry that carries the artificial moon.
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(15, 25, 27, 0.95)";
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(-34, trussTop);
+    ctx.lineTo(trussEnd, trussTop);
+    ctx.moveTo(-34, trussBottom);
+    ctx.lineTo(trussEnd, trussBottom);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(104, 121, 118, 0.96)";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(rig.x, Math.max(14, rig.lampY - 35));
-    ctx.lineTo(rig.x, rig.lampY - 20);
+    ctx.moveTo(-34, trussTop);
+    ctx.lineTo(trussEnd, trussTop);
+    ctx.moveTo(-34, trussBottom);
+    ctx.lineTo(trussEnd, trussBottom);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(71, 85, 83, 0.96)";
+    ctx.lineWidth = 4;
+    for (let x = -22; x < trussEnd - 16; x += 72) {
+      ctx.beginPath();
+      ctx.moveTo(x, trussBottom);
+      ctx.lineTo(Math.min(x + 36, trussEnd), trussTop);
+      ctx.lineTo(Math.min(x + 72, trussEnd), trussBottom);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(18, 28, 30, 0.95)";
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(rig.x, trussTop - 2);
+    ctx.lineTo(rig.x, rig.lampY - moonSize * 0.4);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(139, 154, 148, 0.94)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(rig.x - 5, trussTop - 2);
+    ctx.lineTo(rig.x - 5, rig.lampY - moonSize * 0.4);
     ctx.stroke();
 
-    ctx.strokeStyle = "rgba(229, 209, 151, 0.92)";
+    ctx.strokeStyle = "rgba(229, 209, 151, 0.86)";
     ctx.lineWidth = 2.2;
     ctx.beginPath();
     ctx.moveTo(rig.x, rig.ropeStartY);
@@ -971,21 +1066,20 @@ class TowerPhysicsGame {
     ctx.arc(rig.x, ropeEndY, 4, 0, Math.PI * 2);
     ctx.fill();
 
-    const coreRadius = 17 + illuminate * 5;
-    ctx.fillStyle = colorMix([48, 55, 54], [255, 214, 102], illuminate);
-    ctx.beginPath();
-    ctx.arc(rig.x, rig.lampY, coreRadius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(245, 229, 179, 0.86)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(65, 69, 60, 0.9)";
-    ctx.lineWidth = 3;
-    for (let index = 0; index < 8; index += 1) {
-      const angle = (Math.PI * 2 * index) / 8;
+    const halo = ctx.createRadialGradient(rig.x, rig.lampY, 10, rig.x, rig.lampY, 125 + illuminate * 44);
+    halo.addColorStop(0, `rgba(255, 229, 157, ${0.16 + illuminate * 0.28})`);
+    halo.addColorStop(1, "rgba(255, 229, 157, 0)");
+    ctx.fillStyle = halo;
+    ctx.fillRect(rig.x - 170, rig.lampY - 170, 340, 340);
+    if (this.imageReady(this.artwork.moon)) {
+      ctx.drawImage(this.artwork.moon, rig.x - moonSize / 2, rig.lampY - moonSize / 2, moonSize, moonSize);
+    } else {
+      ctx.fillStyle = colorMix([112, 111, 100], [255, 223, 151], illuminate);
       ctx.beginPath();
-      ctx.moveTo(rig.x + Math.cos(angle) * (coreRadius + 3), rig.lampY + Math.sin(angle) * (coreRadius + 3));
-      ctx.lineTo(rig.x + Math.cos(angle) * (coreRadius + 10), rig.lampY + Math.sin(angle) * (coreRadius + 10));
+      ctx.arc(rig.x, rig.lampY, moonSize * 0.38, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(54, 61, 58, 0.94)";
+      ctx.lineWidth = 5;
       ctx.stroke();
     }
     ctx.restore();
@@ -1001,13 +1095,13 @@ class TowerPhysicsGame {
 
     if (this.status === "activating" || this.status === "cleared") {
       ctx.fillStyle = `rgba(255, 240, 166, ${0.12 + illuminate * 0.18})`;
-      ctx.fillRect(0, -MAX_CAMERA_LIFT, WORLD_WIDTH, WORLD_HEIGHT + MAX_CAMERA_LIFT);
+      ctx.fillRect(0, BACKDROP_TOP, WORLD_WIDTH, BACKDROP_BOTTOM - BACKDROP_TOP);
     }
   }
 
   private drawSceneRuler() {
     const ctx = this.context;
-    const maximumMeters = Math.ceil((this.level.target + 8) / 10) * 10;
+    const maximumMeters = 99;
     const rulerHeight = maximumMeters * PIXELS_PER_METER;
     const left = 20;
     const top = BASE_Y - rulerHeight - 14;
@@ -1030,7 +1124,7 @@ class TowerPhysicsGame {
 
     for (let meter = 0; meter <= maximumMeters; meter += 1) {
       const y = BASE_Y - meter * PIXELS_PER_METER;
-      const major = meter % 10 === 0;
+      const major = meter % 10 === 0 || meter === maximumMeters;
       const medium = meter % 5 === 0;
       ctx.strokeStyle = major ? "rgba(255, 255, 255, 0.86)" : "rgba(245, 251, 253, 0.46)";
       ctx.lineWidth = major ? 1.4 : 1;
@@ -1293,6 +1387,10 @@ function GameStage({ level, onNext }: GameStageProps) {
               event.preventDefault();
               event.currentTarget.setPointerCapture?.(event.pointerId);
               gameRef.current?.beginCanvasInteraction(event.clientX, event.clientY, event.pointerId);
+            }}
+            onWheel={(event) => {
+              event.preventDefault();
+              gameRef.current?.panCamera(event.deltaY);
             }}
           />
           {isInteractive && <button className="reset-action" type="button" aria-label="重新开始本关" onClick={() => gameRef.current?.restart()}>↻</button>}
