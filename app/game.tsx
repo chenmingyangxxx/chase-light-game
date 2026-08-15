@@ -9,7 +9,9 @@ const { Bodies, Body, Composite, Engine, World } = Matter;
 // one viewport so the full 0–99 m climb can be inspected by swiping upward.
 const WORLD_WIDTH = 720;
 const WORLD_HEIGHT = 1000;
-const BASE_X = WORLD_WIDTH / 2;
+// The build plate and the suspended goal share this left-of-centre axis, leaving
+// the right side clear for the portrait material tray.
+const BASE_X = 306;
 // The simulation is a tall world: the 99 m ruler spans 990 virtual pixels and
 // can be inspected by panning, rather than being compressed into one viewport.
 const BASE_Y = 1860;
