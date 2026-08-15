@@ -801,8 +801,8 @@ class TowerPhysicsGame {
       // The small tolerance is intentionally tighter than Matter's default
       // resting slop: a stack now reads as physically touching instead of
       // showing a visible gap between two connected props.
-      && verticalGap >= -3
-      && verticalGap <= 6;
+      && verticalGap >= -6
+      && verticalGap <= 10;
   }
 
   private hasValidStackPosition(item: ItemDefinition | undefined, x: number, y: number, excluded?: TaggedBody) {
@@ -820,10 +820,15 @@ class TowerPhysicsGame {
     return candidates.some((support) => {
       const overlap = Math.min(right, support.bounds.max.x) - Math.max(left, support.bounds.min.x);
       const narrowest = Math.min(item.width, support.bounds.max.x - support.bounds.min.x);
-      // The release may be slightly above its support so it can visibly fall,
-      // but never beside it or from below it.
-      return proposedBottom <= support.bounds.min.y + 2
-        && overlap >= Math.max(14, narrowest * 0.34);
+      // Players release by matching visible outlines, while the physics body
+      // may already overlap its target by a few pixels. Treat that shallow
+      // penetration as a normal landing: Matter resolves it upward on the next
+      // tick. A body beside or below the support still cannot pass.
+      const landingSlack = Math.max(18, Math.min(42, item.height * 0.42));
+      const arrivesFromAbove = y < support.position.y - 2;
+      return arrivesFromAbove
+        && proposedBottom <= support.bounds.min.y + landingSlack
+        && overlap >= Math.max(14, narrowest * 0.3);
     });
   }
 
