@@ -497,9 +497,12 @@ class GameAudio {
   }
 
   robotStep(step: number) {
-    const variation = (step % 3) * 18;
-    this.tone(310 + variation, 470 + variation, 0.105, 0.036, "square");
-    this.tone(92, 62, 0.11, 0.046, "sine", 0.055);
+    const variation = (step % 3) * 7;
+    // A soft joint servo, padded foot contact and brief metal grip. Avoid the
+    // former rising square wave, which sounded like an electronic alert.
+    this.tone(176 + variation, 128 + variation * 0.5, 0.14, 0.018, "triangle");
+    this.tone(94 + variation * 0.35, 58, 0.16, 0.034, "sine", 0.028);
+    this.noise(0.065, 0.009, 760);
   }
 
   failure() {
@@ -1876,7 +1879,7 @@ class TowerPhysicsGame {
       pose.anchor.x,
       pose.anchor.y + 7,
       ROBOT_CLIMB_HEIGHT,
-      (1 - transition) * Math.min(1, pose.climb * 5),
+      1 - transition,
     );
 
     if (transition <= 0) return;
