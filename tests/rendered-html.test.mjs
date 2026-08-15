@@ -21,7 +21,7 @@ test("server-renders the Ashes to Aurora game shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>余烬之光｜物理堆叠小游戏<\/title>/);
   assert.match(html, /余烬之光/);
-  assert.match(html, /aria-label="第 1 关：枯竭广场"/);
+  assert.match(html, /aria-label="第 1 关：新芽吊篮"/);
   assert.match(html, /垃圾物品/);
   assert.match(html, /front-prop-atlas\.png/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site|codex-preview/);

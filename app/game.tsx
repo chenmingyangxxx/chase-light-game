@@ -5,19 +5,22 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 const { Bodies, Body, Composite, Engine, World } = Matter;
 
-const WORLD_WIDTH = 1000;
-const WORLD_HEIGHT = 700;
-const BASE_X = 500;
+// The playable camera is portrait first. The physics world remains taller than
+// one viewport so the full 0–99 m climb can be inspected by swiping upward.
+const WORLD_WIDTH = 720;
+const WORLD_HEIGHT = 1000;
+const BASE_X = WORLD_WIDTH / 2;
 // The simulation is a tall world: the 99 m ruler spans 990 virtual pixels and
 // can be inspected by panning, rather than being compressed into one viewport.
-const BASE_Y = 1260;
+const BASE_Y = 1860;
 const PIXELS_PER_METER = 10;
+const STACK_PLATFORM_WIDTH = 242;
 const RECOVERY_Y = BASE_Y + 94;
-const BACKDROP_TOP = -260;
+const BACKDROP_TOP = 600;
 const BACKDROP_BOTTOM = BASE_Y + 124;
-const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 60;
-const MIN_CAMERA_OFFSET = VIEW_GROUND_CAMERA - 14;
-const MAX_CAMERA_OFFSET = 170 - (BASE_Y - 99 * PIXELS_PER_METER);
+const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 70;
+const MIN_CAMERA_OFFSET = VIEW_GROUND_CAMERA - 20;
+const MAX_CAMERA_OFFSET = 154 - (BASE_Y - 99 * PIXELS_PER_METER);
 
 type Shape = "box" | "circle";
 type ItemRole = "foundation" | "bridge" | "block" | "tall" | "risky";
@@ -93,7 +96,6 @@ interface LevelConfig {
   wind: number;
   inventory: ItemId[];
   hintItems: [ItemId, ItemId, ItemId];
-  targetOffset: number;
 }
 
 interface HeldItem {
@@ -181,7 +183,9 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
     density: 0.0044, friction: 0.94, frictionStatic: 1.2, restitution: 0.005, color: "#66747a", accent: "#9ba9a9", trait: "极重 · 防滑",
   },
   container: {
-    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 112, height: 66,
+    // A 20-foot container is long and low. Keeping this close to its real-world
+    // proportion makes it a useful base instead of an unrealistically tall box.
+    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 225, height: 38,
     density: 0.0033, friction: 0.78, frictionStatic: 0.96, restitution: 0.01, color: "#536f74", accent: "#a2b8a7", trait: "重 · 可堆高",
   },
   car: {
@@ -255,16 +259,16 @@ Object.values(ITEMS).forEach((item) => {
 });
 
 const LEVELS: LevelConfig[] = [
-  { id: 1, target: 8, title: "枯竭广场", subtitle: "从任何地面位置开始搭建。", baseWidth: 356, wind: 0, targetOffset: 0, inventory: ["pallet", "crate", "crate", "beam", "tire", "computer"], hintItems: ["pallet", "crate", "beam"] },
-  { id: 2, target: 12, title: "废弃街角", subtitle: "先加宽底座，再继续加高。", baseWidth: 334, wind: 0, targetOffset: 0, inventory: ["pallet", "pallet", "crate", "fridge", "computer", "tire", "chair"], hintItems: ["pallet", "crate", "fridge"] },
-  { id: 3, target: 17, title: "分类废品站", subtitle: "重物在下，轻物在上。", baseWidth: 314, wind: 0, targetOffset: 0, inventory: ["slab", "container", "crate", "fridge", "washer", "beam", "tire", "bicycle"], hintItems: ["slab", "container", "fridge"] },
-  { id: 4, target: 28, title: "地下停车场", subtitle: "随时拖动已落地物件，修正重心。", baseWidth: 270, wind: 0, targetOffset: 0, inventory: ["slab", "slab", "container", "container", "beam", "cabinet", "crate", "fridge", "tire", "chair"], hintItems: ["slab", "beam", "cabinet"] },
-  { id: 5, target: 40, title: "废弃商场", subtitle: "横向铺开，再向上延伸。", baseWidth: 246, wind: 0, targetOffset: 0, inventory: ["slab", "container", "container", "sofa", "beam", "beam", "scaffold", "fridge", "washer", "crate", "barrel", "bicycle"], hintItems: ["slab", "beam", "scaffold"] },
-  { id: 6, target: 54, title: "工业堆场", subtitle: "侧风出现，保持塔身平衡。", baseWidth: 224, wind: 0.000004, targetOffset: 0, inventory: ["slab", "container", "container", "container", "car", "beam", "beam", "scaffold", "fridge", "cabinet", "washer", "crate", "pipes", "barrel"], hintItems: ["car", "beam", "scaffold"] },
-  { id: 7, target: 69, title: "高架桥残骸", subtitle: "用宽底座抵抗高处侧风。", baseWidth: 204, wind: 0.000006, targetOffset: 0, inventory: ["slab", "car", "container", "container", "container", "scaffold", "scaffold", "beam", "beam", "fridge", "cabinet", "washer", "crate", "pipes", "tire", "bicycle"], hintItems: ["car", "beam", "scaffold"] },
-  { id: 8, target: 81, title: "旧港口", subtitle: "用已放置物件反复修正结构。", baseWidth: 184, wind: 0.000008, targetOffset: 0, inventory: ["slab", "slab", "car", "container", "container", "container", "container", "scaffold", "scaffold", "beam", "beam", "fridge", "cabinet", "washer", "crate", "ladder", "pipes", "tire"], hintItems: ["slab", "container", "scaffold"] },
-  { id: 9, target: 91, title: "污染塔外环", subtitle: "拉绳偏离中心，调整塔顶接近绳端。", baseWidth: 164, wind: 0.00001, targetOffset: 78, inventory: ["slab", "slab", "car", "container", "container", "container", "container", "scaffold", "scaffold", "scaffold", "beam", "beam", "beam", "fridge", "cabinet", "washer", "crate", "ladder", "pipes", "tire"], hintItems: ["car", "beam", "scaffold"] },
-  { id: 10, target: 99, title: "黎明光塔", subtitle: "最后一座塔，穿过风带点亮世界。", baseWidth: 144, wind: 0.000013, targetOffset: 48, inventory: ["slab", "slab", "car", "container", "container", "container", "container", "container", "scaffold", "scaffold", "scaffold", "scaffold", "beam", "beam", "beam", "fridge", "fridge", "cabinet", "washer", "crate", "ladder", "pipes"], hintItems: ["car", "beam", "scaffold"] },
+  {
+    id: 1,
+    target: 99,
+    title: "新芽吊篮",
+    subtitle: "在悬空的新生花朵下，把稳定的废料塔堆至 99 米。",
+    baseWidth: 242,
+    wind: 0,
+    inventory: ["slab", "slab", "slab", "pallet", "pallet", "container", "container", "container", "container", "car", "car", "scaffold", "scaffold", "scaffold", "scaffold", "fridge", "fridge", "fridge", "cabinet", "cabinet", "washer", "washer", "crate", "crate", "crate", "crate", "beam", "beam", "beam", "beam", "ladder", "pipes"],
+    hintItems: ["slab", "scaffold", "beam"],
+  },
 ];
 
 function inventoryFor(level: LevelConfig): Record<ItemId, number> {
@@ -280,7 +284,7 @@ function hintsFor(level: LevelConfig): HintSpec[] {
   return [
     { itemId: first, xMeters: 0, yMeters: 1.8, rotation: 0, text: `先选择「${ITEMS[first].name}」，横放在绿色落点上，铺出宽底座。` },
     { itemId: second, xMeters: 0, yMeters: secondHeight, rotation: 0, text: `接着用「${ITEMS[second].name}」补高，重心尽量对准中线。` },
-    { itemId: third, xMeters: level.targetOffset / PIXELS_PER_METER, yMeters: finalHeight, rotation: 0, text: `最后用「${ITEMS[third].name}」封顶，保持水平接近拉绳。` },
+    { itemId: third, xMeters: 0, yMeters: finalHeight, rotation: 0, text: `最后用「${ITEMS[third].name}」封顶，保持水平接近 99 米的新芽。` },
   ];
 }
 
@@ -329,7 +333,7 @@ class TowerPhysicsGame {
   private cameraManualOffsetY = 0;
   private panning: { pointerId: number; lastClientY: number } | null = null;
   private baseBody: Matter.Body | null = null;
-  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris", HTMLImageElement>;
+  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris" | "goal", HTMLImageElement>;
 
   constructor(canvas: HTMLCanvasElement, level: LevelConfig, onUpdate: (snapshot: GameSnapshot) => void, onClear: () => void) {
     const context = canvas.getContext("2d");
@@ -349,6 +353,7 @@ class TowerPhysicsGame {
       junk: this.loadArtwork("/assets/front-prop-atlas.png"),
       risky: this.loadArtwork("/assets/front-risky-props.png"),
       debris: this.loadArtwork("/assets/ground-debris-foreground.png"),
+      goal: this.loadArtwork("/assets/crane-basket-sprout.png"),
     };
     this.createWorld();
   }
@@ -361,9 +366,12 @@ class TowerPhysicsGame {
   }
 
   start() {
-    window.addEventListener("pointermove", this.onPointerMove, { passive: false });
-    window.addEventListener("pointerup", this.onPointerUp, { passive: false });
-    window.addEventListener("pointercancel", this.onPointerCancel, { passive: false });
+    window.addEventListener("pointermove", this.onPointerMove, { passive: false, capture: true });
+    // Capture-phase listeners still receive the release when a browser has
+    // pointer-captured it on an inventory card or on the canvas.
+    window.addEventListener("pointerup", this.onPointerUp, { passive: false, capture: true });
+    window.addEventListener("pointercancel", this.onPointerCancel, { passive: false, capture: true });
+    window.addEventListener("blur", this.releaseInterruptedInteraction);
     window.addEventListener("keydown", this.onKeyDown);
     this.emit(true);
     this.frameId = window.requestAnimationFrame(this.tick);
@@ -371,9 +379,10 @@ class TowerPhysicsGame {
 
   destroy() {
     window.cancelAnimationFrame(this.frameId);
-    window.removeEventListener("pointermove", this.onPointerMove);
-    window.removeEventListener("pointerup", this.onPointerUp);
-    window.removeEventListener("pointercancel", this.onPointerCancel);
+    window.removeEventListener("pointermove", this.onPointerMove, true);
+    window.removeEventListener("pointerup", this.onPointerUp, true);
+    window.removeEventListener("pointercancel", this.onPointerCancel, true);
+    window.removeEventListener("blur", this.releaseInterruptedInteraction);
     window.removeEventListener("keydown", this.onKeyDown);
     Composite.clear(this.engine.world, false, true);
     Engine.clear(this.engine);
@@ -382,7 +391,8 @@ class TowerPhysicsGame {
   startHolding(itemId: ItemId, clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building" || this.inventory[itemId] <= 0) return;
     this.panning = null;
-    this.releaseAdjustedBody();
+    if (this.adjusting) this.releaseAdjustedBody();
+    if (this.status !== "building") return;
     const point = this.clientToWorld(clientX, clientY);
     this.held = { itemId, x: point.x, y: point.y, angle: 0, pointerId };
     this.message = `正在搬运「${ITEMS[itemId].name}」，松手即可放下。`;
@@ -446,6 +456,20 @@ class TowerPhysicsGame {
     this.emit(true);
   }
 
+  private readonly releaseInterruptedInteraction = () => {
+    if (this.adjusting) {
+      this.releaseAdjustedBody();
+      this.message = "拖拽已中断，物件已恢复为受重力影响的状态。";
+      this.emit(true);
+      return;
+    }
+    if (this.held) {
+      this.held = null;
+      this.message = "拖拽已取消，物料未被消耗。";
+      this.emit(true);
+    }
+  };
+
   useHint() {
     if (this.status !== "building" || this.hintsLeft <= 0) return;
     const hints = hintsFor(this.level);
@@ -503,7 +527,7 @@ class TowerPhysicsGame {
       friction: 0.8,
       label: "recovery-floor",
     });
-    const stackPlatform = Bodies.rectangle(BASE_X, BASE_Y - 12, 242, 24, {
+    const stackPlatform = Bodies.rectangle(BASE_X, BASE_Y - 12, STACK_PLATFORM_WIDTH, 24, {
       isStatic: true,
       friction: 1.08,
       frictionStatic: 1.2,
@@ -553,7 +577,7 @@ class TowerPhysicsGame {
     if (this.adjusting?.pointerId === event.pointerId) {
       event.preventDefault();
       const itemName = this.adjusting.body.gameItem?.name ?? "物件";
-      this.releaseAdjustedBody();
+      if (!this.releaseAdjustedBody()) return;
       this.message = `「${itemName}」已重新放置，继续把塔堆得更高。`;
       this.emit(true);
       return;
@@ -566,7 +590,8 @@ class TowerPhysicsGame {
       event.preventDefault();
       this.placeHeld(point.x, point.y);
     } else {
-      this.message = `已选择「${ITEMS[this.held.itemId].name}」，点击或拖入建造区后松手。`;
+      this.held = null;
+      this.message = "物料没有进入建造区，未被消耗。";
       this.emit(true);
     }
   };
@@ -604,7 +629,15 @@ class TowerPhysicsGame {
   private releaseAdjustedBody() {
     const adjusted = this.adjusting;
     if (!adjusted) return false;
+    if (!this.hasValidStackPosition(adjusted.body.gameItem, adjusted.body.position.x, adjusted.body.position.y, adjusted.body)) {
+      this.adjusting = null;
+      Body.setStatic(adjusted.body, false);
+      this.fail("物件必须放在上一件物品正上方；落到其他位置，挑战失败。");
+      return false;
+    }
     Body.setStatic(adjusted.body, false);
+    adjusted.body.isSleeping = false;
+    adjusted.body.sleepCounter = 0;
     Body.setVelocity(adjusted.body, { x: 0, y: 0 });
     Body.setAngularVelocity(adjusted.body, 0);
     this.adjusting = null;
@@ -619,6 +652,11 @@ class TowerPhysicsGame {
     const halfHeight = item.height / 2;
     const dropX = clamp(x, item.width / 2 + 3, WORLD_WIDTH - item.width / 2 - 3);
     const dropY = clamp(y, halfHeight + 8, BASE_Y - halfHeight - 3);
+    if (!this.hasValidStackPosition(item, dropX, dropY)) {
+      this.held = null;
+      this.fail("物件必须落在废料平台或上一件物品正上方；落到其他位置，挑战失败。");
+      return;
+    }
     const body = this.makeBody(item, dropX, dropY, this.held.angle);
     this.dynamicBodies.push(body);
     World.add(this.engine.world, body);
@@ -636,7 +674,9 @@ class TowerPhysicsGame {
       frictionStatic: item.frictionStatic,
       restitution: item.restitution,
       frictionAir: 0.018,
-      slop: 0.04,
+      // Tight contact tolerance reduces the visible air gaps in a carefully
+      // placed stack while retaining normal Matter collision resolution.
+      slop: 0.005,
       label: `item:${item.id}`,
     };
     const body = (item.shape === "circle"
@@ -673,9 +713,22 @@ class TowerPhysicsGame {
 
   private updateSimulation(delta: number) {
     if (this.status !== "building") return;
-    this.recoverMisplacedBodies();
+    if (this.dynamicBodies.some((body) => this.isFallen(body))) {
+      this.fail("物件脱离了堆叠结构并掉落，挑战失败。");
+      return;
+    }
     const supportGraph = this.supportGraph();
     const towerBodies = supportGraph.bodies;
+    const unsupportedAtRest = this.dynamicBodies.some((body) =>
+      !supportGraph.depth.has(body)
+      && this.elapsed - (body.gameBornAt ?? this.elapsed) > 850
+      && body.speed < 0.33
+      && Math.abs(body.angularVelocity) < 0.035,
+    );
+    if (unsupportedAtRest) {
+      this.fail("物件没有堆在上一件物品上，挑战失败。");
+      return;
+    }
     if (this.level.wind > 0 && towerBodies.length > 0) {
       const phase = Math.sin(this.elapsed / 850) + Math.sin(this.elapsed / 1600) * 0.55;
       towerBodies.forEach((body) => {
@@ -710,21 +763,6 @@ class TowerPhysicsGame {
     if (currentHeight >= this.level.target && hasRealStack && stable && this.stableElapsed > 1250) this.activateLight();
   }
 
-  private recoverMisplacedBodies() {
-    const refundable = this.dynamicBodies.filter((body) =>
-      this.isFallen(body)
-      && this.stableHeight < this.level.target * 0.35
-      && this.elapsed - (body.gameBornAt ?? this.elapsed) > 900,
-    );
-    refundable.forEach((body) => {
-      const item = body.gameItem;
-      if (item) this.inventory[item.id] += 1;
-      World.remove(this.engine.world, body);
-      this.dynamicBodies = this.dynamicBodies.filter((candidate) => candidate !== body);
-      this.message = "物件掉入回收带，已退回物料库。";
-    });
-  }
-
   private towerBodies() {
     return this.supportGraph().bodies;
   }
@@ -733,9 +771,15 @@ class TowerPhysicsGame {
     const candidates = this.dynamicBodies.filter((body) => !this.isFallen(body));
     const depth = new Map<TaggedBody, number>();
     candidates.forEach((body) => {
-      // Both the open ground and the raised central scrap platform are valid
-      // physical foundations for a stack.
-      if (body.bounds.max.y >= BASE_Y - 32 && body.bounds.min.y <= BASE_Y + 16) depth.set(body, 1);
+      // Only the central platform is a valid first foundation. Open ground is
+      // intentionally excluded: every later prop must sit on the stack above it.
+      const platformOverlap = Math.min(body.bounds.max.x, BASE_X + STACK_PLATFORM_WIDTH / 2)
+        - Math.max(body.bounds.min.x, BASE_X - STACK_PLATFORM_WIDTH / 2);
+      if (
+        body.bounds.max.y >= BASE_Y - 32
+        && body.bounds.min.y <= BASE_Y + 16
+        && platformOverlap >= Math.max(14, Math.min(body.bounds.max.x - body.bounds.min.x, STACK_PLATFORM_WIDTH) * 0.3)
+      ) depth.set(body, 1);
     });
 
     let changed = true;
@@ -763,8 +807,27 @@ class TowerPhysicsGame {
     const verticalGap = support.bounds.min.y - body.bounds.max.y;
     return body.position.y < support.position.y - 2
       && overlap >= Math.max(10, narrowest * 0.2)
-      && verticalGap >= -14
-      && verticalGap <= 18;
+      && verticalGap >= -8
+      && verticalGap <= 9;
+  }
+
+  private hasValidStackPosition(item: ItemDefinition | undefined, x: number, y: number, excluded?: TaggedBody) {
+    if (!item) return false;
+    const left = x - item.width / 2;
+    const right = x + item.width / 2;
+    const candidates = this.dynamicBodies.filter((body) => body !== excluded && !this.isFallen(body));
+    if (candidates.length === 0) {
+      const platformOverlap = Math.min(right, BASE_X + STACK_PLATFORM_WIDTH / 2) - Math.max(left, BASE_X - STACK_PLATFORM_WIDTH / 2);
+      return platformOverlap >= Math.max(16, Math.min(item.width, STACK_PLATFORM_WIDTH) * 0.38);
+    }
+    return candidates.some((support) => {
+      const overlap = Math.min(right, support.bounds.max.x) - Math.max(left, support.bounds.min.x);
+      const narrowest = Math.min(item.width, support.bounds.max.x - support.bounds.min.x);
+      // The release may be slightly above its support so it can visibly fall,
+      // but never beside it or from below it.
+      return support.bounds.min.y >= y - item.height * 0.2
+        && overlap >= Math.max(14, narrowest * 0.34);
+    });
   }
 
   private isFallen(body: Matter.Body) {
@@ -793,10 +856,10 @@ class TowerPhysicsGame {
     this.emit(true);
   }
 
-  private fail() {
+  private fail(reason = "塔身失去支撑并倒塌了。调整底座和重心后再试一次。") {
     if (this.status !== "building") return;
     this.status = "failed";
-    this.message = "塔身失去支撑并倒塌了。调整底座和重心后再试一次。";
+    this.message = reason;
     this.emit(true);
   }
 
@@ -874,7 +937,7 @@ class TowerPhysicsGame {
   private automaticCameraOffset() {
     // Follow a growing tower, but preserve the player's manual pan to inspect
     // any section of the complete 0–99 m ruler.
-    return clamp(VIEW_GROUND_CAMERA + clamp(this.height, 0, 99) * 5.2, MIN_CAMERA_OFFSET, MAX_CAMERA_OFFSET);
+    return clamp(VIEW_GROUND_CAMERA + clamp(this.height, 0, 99) * 2.35, MIN_CAMERA_OFFSET, MAX_CAMERA_OFFSET);
   }
 
   private imageReady(image: HTMLImageElement) {
@@ -910,16 +973,20 @@ class TowerPhysicsGame {
     if (this.imageReady(this.artwork.debris)) {
       ctx.save();
       ctx.globalAlpha = 0.94 - illuminate * 0.2;
-      ctx.drawImage(this.artwork.debris, 0, BASE_Y - 210, WORLD_WIDTH, 210);
+      // Keep the ruin strip grounded instead of floating in the build space.
+      ctx.drawImage(this.artwork.debris, 0, BASE_Y - 146, WORLD_WIDTH, 146);
       ctx.restore();
     }
     this.drawStackPlatform();
+    this.drawGoalRig();
+    this.drawGrowth(illuminate, this.elapsed);
 
   }
 
   private drawLongBackdrop(image: HTMLImageElement) {
     const ctx = this.context;
-    const renderedHeight = image.naturalHeight * (WORLD_WIDTH / image.naturalWidth);
+    const nativeHeight = image.naturalHeight * (WORLD_WIDTH / image.naturalWidth);
+    const renderedHeight = Math.max(nativeHeight, BASE_Y + 18 - BACKDROP_TOP);
     // Keep the generated ground aligned with the simulation floor while exposing a long upper sky as the camera rises.
     ctx.drawImage(image, 0, BASE_Y + 18 - renderedHeight, WORLD_WIDTH, renderedHeight);
   }
@@ -963,7 +1030,7 @@ class TowerPhysicsGame {
 
   private drawStackPlatform() {
     const ctx = this.context;
-    const width = 242;
+    const width = STACK_PLATFORM_WIDTH;
     const height = 24;
     const x = BASE_X - width / 2;
     const y = BASE_Y - 24;
@@ -975,7 +1042,7 @@ class TowerPhysicsGame {
     ctx.beginPath();
     ctx.ellipse(BASE_X, BASE_Y - 4, 152, 21, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "rgba(46, 50, 46, 0.92)";
+    ctx.fillStyle = "rgba(42, 47, 43, 0.94)";
     ctx.beginPath();
     ctx.moveTo(x + 18, BASE_Y - 7);
     ctx.lineTo(x + 48, BASE_Y - 20);
@@ -983,7 +1050,7 @@ class TowerPhysicsGame {
     ctx.lineTo(x + width - 18, BASE_Y - 7);
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = "rgba(94, 85, 62, 0.72)";
+    ctx.fillStyle = "rgba(75, 69, 56, 0.72)";
     for (let index = 0; index < 6; index += 1) {
       const rubbleX = x + 30 + index * 34;
       ctx.beginPath();
@@ -991,14 +1058,14 @@ class TowerPhysicsGame {
       ctx.fill();
     }
     roundedRect(ctx, x, y, width, height, 5);
-    ctx.fillStyle = "#3d4b4a";
+    ctx.fillStyle = "#303b3a";
     ctx.fill();
     ctx.strokeStyle = "rgba(14, 24, 25, 0.95)";
     ctx.lineWidth = 4;
     ctx.stroke();
-    ctx.fillStyle = "rgba(161, 170, 148, 0.36)";
+    ctx.fillStyle = "rgba(119, 128, 113, 0.3)";
     ctx.fillRect(x + 8, y + 7, width - 16, 5);
-    ctx.strokeStyle = "rgba(174, 150, 90, 0.8)";
+    ctx.strokeStyle = "rgba(99, 88, 64, 0.78)";
     ctx.lineWidth = 2;
     for (let railX = x + 18; railX < x + width - 14; railX += 24) {
       ctx.beginPath();
@@ -1010,6 +1077,54 @@ class TowerPhysicsGame {
     for (const boltX of [x + 12, x + width - 12]) {
       ctx.beginPath();
       ctx.arc(boltX, y + 17, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  private drawGoalRig() {
+    const ctx = this.context;
+    const basketX = BASE_X + 92;
+    const basketY = BASE_Y - 99 * PIXELS_PER_METER + 16;
+    const boomY = basketY - 150;
+    ctx.save();
+    ctx.strokeStyle = "rgba(41, 50, 49, 0.94)";
+    ctx.lineWidth = 11;
+    ctx.lineCap = "square";
+    ctx.beginPath();
+    ctx.moveTo(-30, boomY);
+    ctx.lineTo(basketX + 4, boomY);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(102, 106, 92, 0.52)";
+    ctx.lineWidth = 2;
+    for (let x = 18; x < basketX - 20; x += 52) {
+      ctx.beginPath();
+      ctx.moveTo(x, boomY + 6);
+      ctx.lineTo(x + 27, boomY + 31);
+      ctx.lineTo(x + 52, boomY + 6);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(27, 34, 33, 0.92)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(basketX, boomY + 4);
+    ctx.lineTo(basketX, basketY - 65);
+    ctx.stroke();
+    if (this.imageReady(this.artwork.goal)) {
+      ctx.drawImage(this.artwork.goal, basketX - 64, basketY - 72, 128, 144);
+    } else {
+      ctx.strokeStyle = "rgba(137, 133, 100, 0.92)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(basketX - 38, basketY - 18, 76, 44);
+      ctx.strokeStyle = "#7eb65d";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(basketX, basketY - 17);
+      ctx.quadraticCurveTo(basketX - 4, basketY - 42, basketX + 2, basketY - 56);
+      ctx.stroke();
+      ctx.fillStyle = "#d6df8e";
+      ctx.beginPath();
+      ctx.arc(basketX + 2, basketY - 60, 4, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
@@ -1120,8 +1235,9 @@ class TowerPhysicsGame {
     if (!this.imageReady(image)) return false;
     const sourceWidth = image.naturalWidth / sprite.columns;
     const sourceHeight = image.naturalHeight / sprite.rows;
-    const visualWidth = item.width * (item.shape === "circle" ? 1.16 : 1.12);
-    const visualHeight = item.height * (item.shape === "circle" ? 1.16 : 1.2);
+    // Atlas cells are square. Drawing each cell at a uniform scale keeps the
+    // front-view props from being stretched or flattened by a rectangular body.
+    const visualSize = Math.max(item.width, item.height) * (item.shape === "circle" ? 1.1 : 1.06);
     const ctx = this.context;
     const previousAlpha = ctx.globalAlpha;
     ctx.globalAlpha = previousAlpha * opacity;
@@ -1131,10 +1247,10 @@ class TowerPhysicsGame {
       sprite.row * sourceHeight,
       sourceWidth,
       sourceHeight,
-      -visualWidth / 2,
-      -visualHeight / 2,
-      visualWidth,
-      visualHeight,
+      -visualSize / 2,
+      -visualSize / 2,
+      visualSize,
+      visualSize,
     );
     ctx.globalAlpha = previousAlpha;
     return true;
@@ -1236,10 +1352,9 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width:
 
 interface GameStageProps {
   level: LevelConfig;
-  onNext: () => void;
 }
 
-function GameStage({ level, onNext }: GameStageProps) {
+function GameStage({ level }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<TowerPhysicsGame | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
@@ -1287,9 +1402,9 @@ function GameStage({ level, onNext }: GameStageProps) {
           {(snapshot.status === "cleared" || snapshot.status === "failed") && (
             <div className={`result-overlay ${snapshot.status}`}>
               <div className="result-symbol">{snapshot.status === "cleared" ? "✦" : "↯"}</div>
-              <strong>{snapshot.status === "cleared" ? (level.id === 10 ? "黎明归来" : "高度已达成") : "高塔倒塌"}</strong>
-              <p>{snapshot.status === "cleared" ? "土地正在恢复生机。" : "重新调整底座与重心，再挑战一次。"}</p>
-              {snapshot.status === "cleared" && <button className="primary-action" onClick={level.id === 10 ? () => gameRef.current?.restart() : onNext}>{level.id === 10 ? "再次照亮" : "进入下一关"}</button>}
+              <strong>{snapshot.status === "cleared" ? "抵达新芽" : "堆叠失败"}</strong>
+              <p>{snapshot.status === "cleared" ? "99 米处的生命正在复苏。" : "物件必须连续堆在上一件物品上。"}</p>
+              {snapshot.status === "cleared" && <button className="primary-action" onClick={() => gameRef.current?.restart()}>再次挑战</button>}
               {snapshot.status === "failed" && <button className="primary-action" onClick={() => gameRef.current?.restart()}>重新搭建</button>}
             </div>
           )}
@@ -1337,17 +1452,12 @@ function GameStage({ level, onNext }: GameStageProps) {
 }
 
 export function DawnTowerGame() {
-  const [activeLevel, setActiveLevel] = useState(1);
-
-  const level = LEVELS[activeLevel - 1];
-  const nextLevel = () => {
-    setActiveLevel((current) => (current === 10 ? 10 : current + 1));
-  };
+  const level = LEVELS[0];
 
   return (
     <main className="game-app minimal-game">
       <h1 className="sr-only">余烬之光</h1>
-      <GameStage key={level.id} level={level} onNext={nextLevel} />
+      <GameStage key={level.id} level={level} />
     </main>
   );
 }
