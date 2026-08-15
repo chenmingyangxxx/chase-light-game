@@ -1154,18 +1154,25 @@ class TowerPhysicsGame {
     const basketX = GOAL_BASKET_X;
     const basketY = BASE_Y - 99 * PIXELS_PER_METER + 16;
     const progress = this.activationProgress();
-    const arrival = clamp((progress - 0.1) / 0.38, 0, 1);
-    const grasp = clamp((progress - 0.56) / 0.26, 0, 1);
-    const easeArrival = 1 - (1 - arrival) * (1 - arrival);
+    // The completion beat explicitly follows the game's core loop: the helper
+    // starts at the steel plate, climbs the finished rubbish tower, then takes
+    // the sprout from the suspended basket.
+    const climb = clamp((progress - 0.06) / 0.56, 0, 1);
+    const approach = clamp((progress - 0.56) / 0.16, 0, 1);
+    const grasp = clamp((progress - 0.73) / 0.18, 0, 1);
+    const easeClimb = 1 - (1 - climb) * (1 - climb);
     const robotWidth = 98;
     const robotHeight = 147;
-    const robotX = basketX - 152 + 88 * easeArrival;
-    const robotY = basketY - 86 + Math.sin(this.elapsed / 150) * 1.3;
+    const startX = BASE_X - 10;
+    const targetX = basketX - 64;
+    const robotX = startX + (targetX - startX) * approach;
+    const robotY = (BASE_Y - robotHeight + 2) + ((basketY - 86) - (BASE_Y - robotHeight + 2)) * easeClimb;
+    const stepBounce = Math.sin(this.elapsed / 96) * (2.2 + (1 - climb) * 1.5);
 
     ctx.save();
-    ctx.globalAlpha = Math.min(1, arrival * 2.2);
-    ctx.translate(robotX, robotY + (1 - arrival) * 12);
-    ctx.rotate(-0.06 + Math.sin(this.elapsed / 190) * 0.018);
+    ctx.globalAlpha = Math.min(1, climb * 3.2);
+    ctx.translate(robotX, robotY + stepBounce);
+    ctx.rotate(-0.045 + Math.sin(this.elapsed / 130) * 0.022);
     ctx.drawImage(this.artwork.robot, -robotWidth / 2, 0, robotWidth, robotHeight);
     ctx.restore();
 
