@@ -609,6 +609,17 @@ body {
   width: 100%;
   height: auto;
 }
+.ending-wordmark p {
+  margin: clamp(10px, 2.2vh, 20px) 0 0;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: clamp(12px, 1.35vw, 17px);
+  font-weight: 500;
+  letter-spacing: .26em;
+  line-height: 1.5;
+  text-align: center;
+  text-indent: .26em;
+  text-shadow: 0 3px 14px rgba(0, 0, 0, 0.46);
+}
 .ending-home-button {
   position: absolute;
   z-index: 3;

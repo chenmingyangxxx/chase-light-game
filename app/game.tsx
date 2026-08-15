@@ -2239,6 +2239,7 @@ function GameStage({ level, onExit }: GameStageProps) {
                 <>
                   <div className="ending-wordmark" aria-label="追光">
                     <img src="/assets/chase-light-brush-wordmark.png" alt="追光" />
+                    <p>以心筑塔，向光而生</p>
                   </div>
                   <button
                     className="ending-home-button"
