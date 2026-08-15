@@ -51,6 +51,10 @@ const RECOVERY_Y = BASE_Y + 113;
 // composited, avoiding a visible seam at the top of the scene.
 const BACKDROP_SKY_TOP = 410;
 const BACKDROP_BOTTOM = BASE_Y + 149;
+// The source paintings include more foreground than the current play framing
+// needs. Lift only the painted backdrop by an exact CSS-pixel amount; the
+// Matter floor, drop zone and foreground debris keep their established anchors.
+const BACKDROP_LIFT_CSS_PX = 100;
 // Keep the physical floor close to the lower edge of the build viewport. The
 // former 84 px world-space margin made placed props appear to hover above the
 // foreground road in wide layouts.
@@ -240,7 +244,7 @@ const ITEM_ART: Record<ItemId, ArtSprite> = {
   beam: { asset: "junk-sprite-atlas.png", column: 2, row: 1, columns: 4, rows: 4, visibleBounds: [0.04, 0.36, 0.965, 0.655] },
   ladder: { asset: "junk-sprite-atlas.png", column: 3, row: 1, columns: 4, rows: 4, visibleBounds: [0.29, 0, 0.685, 1] },
   pipes: { asset: "junk-sprite-atlas.png", column: 0, row: 2, columns: 4, rows: 4, visibleBounds: [0.035, 0.28, 0.985, 0.8] },
-  crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4, visibleBounds: [0.085, 0.15, 0.935, 1] },
+  crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4, visibleBounds: [0.085, 0.15, 0.935, 0.84] },
   fridge: { asset: "junk-sprite-atlas.png", column: 2, row: 2, columns: 4, rows: 4, visibleBounds: [0.235, 0.005, 0.755, 0.96] },
   washer: { asset: "junk-sprite-atlas.png", column: 3, row: 2, columns: 4, rows: 4, visibleBounds: [0.155, 0.04, 0.82, 0.95] },
   computer: { asset: "monitor", column: 0, row: 0, columns: 1, rows: 1, visibleBounds: [0.075, 0.02, 0.925, 0.975] },
@@ -762,6 +766,7 @@ class TowerPhysicsGame {
   private cameraAutoFollowPeakHeight = 0;
   private viewportWorldWidth = WORLD_WIDTH;
   private viewportWorldLeft = 0;
+  private backdropLiftWorld = BACKDROP_LIFT_CSS_PX;
   private panning: { pointerId: number; lastClientY: number } | null = null;
   private baseBody: Matter.Body | null = null;
   private readonly artwork: Record<
@@ -1619,6 +1624,7 @@ class TowerPhysicsGame {
     const scale = rect.height / WORLD_HEIGHT;
     this.viewportWorldWidth = rect.width / Math.max(scale, 0.001);
     this.viewportWorldLeft = BASE_X - this.viewportWorldWidth / 2;
+    this.backdropLiftWorld = BACKDROP_LIFT_CSS_PX / Math.max(scale, 0.001);
     this.context.setTransform(1, 0, 0, 1, 0, 0);
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.context.setTransform(dpr * scale, 0, 0, dpr * scale, -this.viewportWorldLeft * dpr * scale, 0);
@@ -1812,10 +1818,9 @@ class TowerPhysicsGame {
     const ctx = this.context;
     const areaWidth = this.viewportWorldWidth;
     const areaHeight = BACKDROP_BOTTOM - BACKDROP_SKY_TOP;
-    // The authored road-contact line is locked to the Matter floor. Desktop
-    // and phone then share one world scale: wide screens reveal/crop the sides
-    // without ever changing the image's vertical size or pushing its ground
-    // below the physical landing plane.
+    // First derive the same undistorted floor-anchored scale on every viewport,
+    // then apply the requested 100 CSS-pixel visual lift. Keeping this as a
+    // render-only offset avoids moving any physics or interaction coordinates.
     const sourceGroundRatio = (BASE_Y - BACKDROP_SKY_TOP) / areaHeight;
     const verticalScale = (BASE_Y - BACKDROP_SKY_TOP)
       / Math.max(1, image.naturalHeight * sourceGroundRatio);
@@ -1823,7 +1828,7 @@ class TowerPhysicsGame {
     const renderedWidth = image.naturalWidth * backdropScale;
     const renderedHeight = image.naturalHeight * backdropScale;
     const renderedX = BASE_X - renderedWidth / 2;
-    const renderedY = BASE_Y - renderedHeight * sourceGroundRatio;
+    const renderedY = BASE_Y - renderedHeight * sourceGroundRatio - this.backdropLiftWorld;
     ctx.save();
     ctx.beginPath();
     ctx.rect(this.viewportWorldLeft, BACKDROP_SKY_TOP, areaWidth, BACKDROP_BOTTOM - BACKDROP_SKY_TOP);
@@ -2847,6 +2852,11 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               </div>
             </div>
           )}
+          {/* Instrumental score only: there is no spoken content to caption. */}
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio ref={endingMusicRef} loop preload="auto" aria-hidden="true">
+            <source src="/assets/victory-ending-pingpong.wav" type="audio/wav" />
+          </audio>
           {endingPlaying && (
             <div className={`ending-cinematic ${endingReady ? "is-ready" : ""} ${endingComplete ? "is-complete" : ""}`} aria-label="通关结尾">
               <video
@@ -2862,9 +2872,6 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               >
                 <source src="/assets/victory-ending.mp4" type="video/mp4" />
               </video>
-              <audio ref={endingMusicRef} loop preload="auto" aria-hidden="true">
-                <source src="/assets/victory-ending.mp4" type="audio/mp4" />
-              </audio>
               {endingNeedsGesture && !endingComplete && (
                 <button
                   className="ending-play-button"
