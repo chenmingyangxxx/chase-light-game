@@ -9,6 +9,10 @@ const { Bodies, Body, Composite, Engine, World } = Matter;
 // one viewport so the full 0–99 m climb can be inspected by swiping upward.
 const WORLD_WIDTH = 720;
 const WORLD_HEIGHT = 1000;
+// The physical floor is wider than any supported viewport. The visible drop
+// zone is calculated from the canvas and the overlaid inventory rail, so wide
+// monitors gain usable ground without changing the world's metre scale.
+const PHYSICS_GROUND_WIDTH = 4096;
 // The build plate and the suspended goal share this left-of-centre axis, leaving
 // the right side clear for the portrait material tray.
 const BASE_X = 306;
@@ -534,19 +538,21 @@ class TowerPhysicsGame {
   }
 
   private createWorld() {
-    const base = Bodies.rectangle(WORLD_WIDTH / 2, BASE_Y + 11, WORLD_WIDTH, 22, {
+    const groundLeft = BASE_X - PHYSICS_GROUND_WIDTH / 2;
+    const groundRight = BASE_X + PHYSICS_GROUND_WIDTH / 2;
+    const base = Bodies.rectangle(BASE_X, BASE_Y + 11, PHYSICS_GROUND_WIDTH, 22, {
       isStatic: true,
       friction: 1,
       frictionStatic: 1,
       label: "open-ground",
     });
-    const recoveryFloor = Bodies.rectangle(WORLD_WIDTH / 2, RECOVERY_Y + 13, WORLD_WIDTH, 26, {
+    const recoveryFloor = Bodies.rectangle(BASE_X, RECOVERY_Y + 13, PHYSICS_GROUND_WIDTH, 26, {
       isStatic: true,
       friction: 0.8,
       label: "recovery-floor",
     });
-    const leftWall = Bodies.rectangle(16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
-    const rightWall = Bodies.rectangle(WORLD_WIDTH - 16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
+    const leftWall = Bodies.rectangle(groundLeft + 16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
+    const rightWall = Bodies.rectangle(groundRight - 16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
     this.baseBody = base;
     World.add(this.engine.world, [base, recoveryFloor, leftWall, rightWall]);
   }
@@ -574,7 +580,8 @@ class TowerPhysicsGame {
     const item = adjusted.body.gameItem;
     const halfWidth = (item?.width ?? 40) / 2;
     const halfHeight = (item?.height ?? 40) / 2;
-    const x = clamp(point.x - adjusted.offsetX, halfWidth + 3, WORLD_WIDTH - halfWidth - 3);
+    const dropZone = this.dropZoneWorldBounds();
+    const x = clamp(point.x - adjusted.offsetX, dropZone.left + halfWidth + 3, dropZone.right - halfWidth - 3);
     const y = clamp(point.y - adjusted.offsetY, 52, BASE_Y - halfHeight);
     Body.setPosition(adjusted.body, { x, y });
     Body.setVelocity(adjusted.body, { x: 0, y: 0 });
@@ -597,9 +604,15 @@ class TowerPhysicsGame {
     }
     if (!this.held || this.held.pointerId !== event.pointerId) return;
     const point = this.clientToWorld(event.clientX, event.clientY);
-    const inCanvas = point.x >= 38 && point.x <= WORLD_WIDTH - 38 && point.y >= 52 && point.y <= BASE_Y - 3;
+    const item = ITEMS[this.held.itemId];
+    const dropZone = this.dropZoneWorldBounds();
+    const inDropZone = this.isClientInsideDropZone(event.clientX, event.clientY)
+      && point.x >= dropZone.left + item.width / 2 + 3
+      && point.x <= dropZone.right - item.width / 2 - 3
+      && point.y >= 52
+      && point.y <= BASE_Y - 3;
     this.held.pointerId = undefined;
-    if (inCanvas) {
+    if (inDropZone) {
       event.preventDefault();
       this.placeHeld(point.x, point.y);
     } else {
@@ -657,7 +670,8 @@ class TowerPhysicsGame {
     // Drop exactly where the player releases it. Matter handles collision,
     // gravity and any resulting fall instead of snapping to a preset point.
     const halfHeight = item.height / 2;
-    const dropX = clamp(x, item.width / 2 + 3, WORLD_WIDTH - item.width / 2 - 3);
+    const dropZone = this.dropZoneWorldBounds();
+    const dropX = clamp(x, dropZone.left + item.width / 2 + 3, dropZone.right - item.width / 2 - 3);
     const dropY = clamp(y, halfHeight + 8, BASE_Y - halfHeight - 3);
     const body = this.makeBody(item, dropX, dropY, this.held.angle);
     this.dynamicBodies.push(body);
@@ -828,7 +842,8 @@ class TowerPhysicsGame {
   }
 
   private isFallen(body: Matter.Body) {
-    return body.position.y > BASE_Y + 62 || body.position.x < 42 || body.position.x > WORLD_WIDTH - 42;
+    const dropZone = this.dropZoneWorldBounds();
+    return body.position.y > BASE_Y + 62 || body.position.x < dropZone.left - 42 || body.position.x > dropZone.right + 42;
   }
 
   private measureHeight(tower = this.towerBodies()) {
@@ -866,6 +881,36 @@ class TowerPhysicsGame {
       x: this.viewportWorldLeft + ((clientX - rect.left) / Math.max(1, rect.width)) * this.viewportWorldWidth,
       y: ((clientY - rect.top) / Math.max(1, rect.height)) * WORLD_HEIGHT - this.cameraOffsetY,
     };
+  }
+
+  private dropZoneClientBounds() {
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const inventory = this.canvas.parentElement?.querySelector<HTMLElement>(".inventory-panel");
+    const inventoryRect = inventory?.getBoundingClientRect();
+    const inventoryOverlaysCanvas = inventoryRect
+      && inventoryRect.left < canvasRect.right
+      && inventoryRect.right > canvasRect.left
+      && inventoryRect.top < canvasRect.bottom
+      && inventoryRect.bottom > canvasRect.top;
+    return {
+      left: canvasRect.left,
+      right: inventoryOverlaysCanvas ? Math.max(canvasRect.left, inventoryRect.left - 7) : canvasRect.right,
+      top: canvasRect.top,
+      bottom: canvasRect.bottom,
+      canvasRect,
+    };
+  }
+
+  private dropZoneWorldBounds() {
+    const bounds = this.dropZoneClientBounds();
+    const toWorldX = (clientX: number) => this.viewportWorldLeft
+      + ((clientX - bounds.canvasRect.left) / Math.max(1, bounds.canvasRect.width)) * this.viewportWorldWidth;
+    return { left: toWorldX(bounds.left), right: toWorldX(bounds.right) };
+  }
+
+  private isClientInsideDropZone(clientX: number, clientY: number) {
+    const bounds = this.dropZoneClientBounds();
+    return clientX >= bounds.left && clientX <= bounds.right && clientY >= bounds.top && clientY <= bounds.bottom;
   }
 
   panCamera(screenDeltaY: number) {
@@ -979,8 +1024,7 @@ class TowerPhysicsGame {
     if (this.imageReady(this.artwork.debris)) {
       ctx.save();
       ctx.globalAlpha = 0.94 - illuminate * 0.2;
-      // Keep the ruin strip grounded instead of floating in the build space.
-      ctx.drawImage(this.artwork.debris, this.viewportWorldLeft, BASE_Y - 204, this.viewportWorldWidth, BACKDROP_BOTTOM - (BASE_Y - 204));
+      this.drawResponsiveGroundDebris(this.artwork.debris);
       ctx.restore();
     }
     this.drawGoalRig(this.activationProgress());
@@ -1108,6 +1152,51 @@ class TowerPhysicsGame {
     ctx.rect(this.viewportWorldLeft, BACKDROP_TOP, areaWidth, areaHeight);
     ctx.clip();
     ctx.drawImage(image, renderedX, renderedY, renderedWidth, renderedHeight);
+    ctx.restore();
+  }
+
+  private drawResponsiveGroundDebris(image: HTMLImageElement) {
+    const ctx = this.context;
+    // The source was authored as a 720-world-unit foreground strip. Preserve
+    // that scale on narrow screens; on wider screens split it at its empty
+    // centre and pin each half to an outer edge. The heaps move apart instead
+    // of being stretched wider.
+    const renderedHeight = 240;
+    const renderedWidth = image.naturalWidth * (renderedHeight / image.naturalHeight);
+    const y = BACKDROP_BOTTOM - renderedHeight;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(this.viewportWorldLeft, y, this.viewportWorldWidth, renderedHeight);
+    ctx.clip();
+
+    if (this.viewportWorldWidth <= renderedWidth) {
+      ctx.drawImage(image, BASE_X - renderedWidth / 2, y, renderedWidth, renderedHeight);
+    } else {
+      const sourceHalfWidth = image.naturalWidth / 2;
+      const renderedHalfWidth = renderedWidth / 2;
+      ctx.drawImage(
+        image,
+        0,
+        0,
+        sourceHalfWidth,
+        image.naturalHeight,
+        this.viewportWorldLeft,
+        y,
+        renderedHalfWidth,
+        renderedHeight,
+      );
+      ctx.drawImage(
+        image,
+        sourceHalfWidth,
+        0,
+        sourceHalfWidth,
+        image.naturalHeight,
+        this.viewportWorldLeft + this.viewportWorldWidth - renderedHalfWidth,
+        y,
+        renderedHalfWidth,
+        renderedHeight,
+      );
+    }
     ctx.restore();
   }
 
