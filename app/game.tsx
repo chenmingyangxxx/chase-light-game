@@ -1928,6 +1928,7 @@ export function DawnTowerGame() {
   const level = LEVELS[0];
   const [loading, setLoading] = useState(8);
   const [started, setStarted] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   useEffect(() => {
     if (started) return;
@@ -1942,6 +1943,15 @@ export function DawnTowerGame() {
     }, 90);
     return () => window.clearInterval(timer);
   }, [started]);
+
+  useEffect(() => {
+    if (!guideOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setGuideOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [guideOpen]);
 
   if (!started) {
     const ready = loading >= 100;
@@ -1979,12 +1989,80 @@ export function DawnTowerGame() {
 
           <div className="launch-actions">
             {ready && (
-              <button className="launch-start" type="button" onClick={() => setStarted(true)}>
-                <span className="launch-start-label">开始游戏</span>
-              </button>
+              <>
+                <button className="launch-start" type="button" onClick={() => setStarted(true)}>
+                  <span className="launch-start-label">开始游戏</span>
+                </button>
+                <button
+                  className="launch-guide-button"
+                  type="button"
+                  aria-haspopup="dialog"
+                  aria-controls="launch-guide-dialog"
+                  onClick={() => setGuideOpen(true)}
+                >
+                  故事及玩法说明
+                </button>
+              </>
             )}
           </div>
         </section>
+
+        {guideOpen && (
+          <div
+            className="launch-guide-backdrop"
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget) setGuideOpen(false);
+            }}
+          >
+            <section
+              id="launch-guide-dialog"
+              className="launch-guide-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="launch-guide-title"
+            >
+              <header className="launch-guide-header">
+                <div>
+                  <span>CHASING THE LIGHT</span>
+                  <h2 id="launch-guide-title">故事及玩法说明</h2>
+                </div>
+                <button type="button" aria-label="关闭故事及玩法说明" onClick={() => setGuideOpen(false)}>
+                  ×
+                </button>
+              </header>
+
+              <div className="launch-guide-scroll">
+                <article>
+                  <h3>故事背景</h3>
+                  <p>
+                    污染遮蔽了天空，城市在昏暗中沉寂。只有抵达 99 米以上，才能再次触碰阳光与新生。废墟顶端的吊篮里，
+                    一株刚刚发芽的小花正等待被发现。
+                  </p>
+                </article>
+                <article>
+                  <h3>游戏目标</h3>
+                  <p>利用散落的生活与建筑废料搭建高塔，让机器人沿着稳定的垃圾堆攀爬至 99 米，摘取新生的小花。</p>
+                </article>
+                <article>
+                  <h3>堆叠规则</h3>
+                  <ol>
+                    <li>从右侧物品栏拖出垃圾，放入场景中的有效搭建区域。</li>
+                    <li>第一件物品可以直接落在地面；从第二件开始，必须堆放在上一件物品之上。</li>
+                    <li>松手后物品会受到重力、碰撞和重心影响；已经放置的物品仍可拖动调整。</li>
+                    <li>垃圾堆抵达吊篮下方的 99 米位置并保持稳定后，机器人会开始攀爬。</li>
+                  </ol>
+                </article>
+                <aside>
+                  失败条件：非第一件物品掉落到地面，或已经搭建的垃圾堆整体倒塌。仅仅放置在不同位置不会立即失败。
+                </aside>
+              </div>
+
+              <footer>
+                <button type="button" onClick={() => setGuideOpen(false)}>我明白了</button>
+              </footer>
+            </section>
+          </div>
+        )}
       </main>
     );
   }
