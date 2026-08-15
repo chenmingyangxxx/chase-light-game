@@ -1135,7 +1135,6 @@ class TowerPhysicsGame {
 
   private drawWorld(illuminate: number) {
     const ctx = this.context;
-    this.drawSceneRuler();
     this.dynamicBodies.forEach((body) => this.drawItem(body));
     if (this.held) this.drawGhost(this.held);
 
