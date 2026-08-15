@@ -12,21 +12,23 @@ const WORLD_HEIGHT = 1000;
 // The build plate and the suspended goal share this left-of-centre axis, leaving
 // the right side clear for the portrait material tray.
 const BASE_X = 306;
-// The simulation is a tall world: the 99 m ruler spans 990 virtual pixels and
-// can be inspected by panning, rather than being compressed into one viewport.
-const BASE_Y = 1860;
-const PIXELS_PER_METER = 10;
+// Keep a single physical scale across the scene: 12 virtual pixels are one
+// metre.  The 99 m ascent is therefore 1188 px tall and deliberately scrolls
+// beyond one portrait viewport, while the real-world-sized props are large
+// enough to read and manipulate on a phone.
+const BASE_Y = 2058;
+const PIXELS_PER_METER = 12;
 const GOAL_BASKET_X = BASE_X + 14;
 // The basket's lower rail is exactly the 99 m success position. Its crane,
 // rope and flower are placed around that fixed world-space altitude.
 const GOAL_REACH_HEIGHT = 99;
 const GOAL_REACH_Y = BASE_Y - GOAL_REACH_HEIGHT * PIXELS_PER_METER;
-const GOAL_BASKET_Y = GOAL_REACH_Y - 72;
-const GOAL_REACH_HALF_WIDTH = 116;
-const RECOVERY_Y = BASE_Y + 94;
+const GOAL_BASKET_Y = GOAL_REACH_Y - 86;
+const GOAL_REACH_HALF_WIDTH = 139;
+const RECOVERY_Y = BASE_Y + 113;
 const BACKDROP_TOP = 600;
-const BACKDROP_BOTTOM = BASE_Y + 124;
-const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 70;
+const BACKDROP_BOTTOM = BASE_Y + 149;
+const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 84;
 const MIN_CAMERA_OFFSET = VIEW_GROUND_CAMERA - 20;
 const MAX_CAMERA_OFFSET = 154 - (BASE_Y - 99 * PIXELS_PER_METER);
 
@@ -60,6 +62,13 @@ interface ArtSprite {
   row: number;
   columns: number;
   rows: number;
+  /**
+   * The opaque artwork footprint inside its atlas cell, expressed as
+   * [left, top, right, bottom] percentages.  Generated cutouts deliberately
+   * have different safety margins, so a generic cell crop makes objects look
+   * as if they are floating even while their Matter bodies are in contact.
+   */
+  visibleBounds: [number, number, number, number];
 }
 
 interface IconSprite {
@@ -140,24 +149,24 @@ interface GameSnapshot {
 }
 
 const ITEM_ART: Record<ItemId, ArtSprite> = {
-  pallet: { asset: "junk-sprite-atlas.png", column: 0, row: 0, columns: 4, rows: 4 },
-  slab: { asset: "junk-sprite-atlas.png", column: 1, row: 0, columns: 4, rows: 4 },
-  container: { asset: "junk-sprite-atlas.png", column: 2, row: 0, columns: 4, rows: 4 },
-  car: { asset: "junk-sprite-atlas.png", column: 3, row: 0, columns: 4, rows: 4 },
-  cabinet: { asset: "junk-sprite-atlas.png", column: 0, row: 1, columns: 4, rows: 4 },
-  sofa: { asset: "junk-sprite-atlas.png", column: 1, row: 1, columns: 4, rows: 4 },
-  beam: { asset: "junk-sprite-atlas.png", column: 2, row: 1, columns: 4, rows: 4 },
-  ladder: { asset: "junk-sprite-atlas.png", column: 3, row: 1, columns: 4, rows: 4 },
-  pipes: { asset: "junk-sprite-atlas.png", column: 0, row: 2, columns: 4, rows: 4 },
-  crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4 },
-  fridge: { asset: "junk-sprite-atlas.png", column: 2, row: 2, columns: 4, rows: 4 },
-  washer: { asset: "junk-sprite-atlas.png", column: 3, row: 2, columns: 4, rows: 4 },
-  computer: { asset: "monitor", column: 0, row: 0, columns: 1, rows: 1 },
-  scaffold: { asset: "junk-sprite-atlas.png", column: 1, row: 3, columns: 4, rows: 4 },
-  barrel: { asset: "junk-sprite-atlas.png", column: 2, row: 3, columns: 4, rows: 4 },
-  tire: { asset: "junk-sprite-atlas.png", column: 3, row: 3, columns: 4, rows: 4 },
-  bicycle: { asset: "risky-props.png", column: 0, row: 0, columns: 2, rows: 1 },
-  chair: { asset: "risky-props.png", column: 1, row: 0, columns: 2, rows: 1 },
+  pallet: { asset: "junk-sprite-atlas.png", column: 0, row: 0, columns: 4, rows: 4, visibleBounds: [0.077, 0.179, 0.922, 0.919] },
+  slab: { asset: "junk-sprite-atlas.png", column: 1, row: 0, columns: 4, rows: 4, visibleBounds: [0.032, 0.169, 0.951, 0.925] },
+  container: { asset: "junk-sprite-atlas.png", column: 2, row: 0, columns: 4, rows: 4, visibleBounds: [0.070, 0.083, 0.998, 0.976] },
+  car: { asset: "junk-sprite-atlas.png", column: 3, row: 0, columns: 4, rows: 4, visibleBounds: [0, 0.415, 0.947, 0.769] },
+  cabinet: { asset: "junk-sprite-atlas.png", column: 0, row: 1, columns: 4, rows: 4, visibleBounds: [0.255, 0.016, 0.730, 0.992] },
+  sofa: { asset: "junk-sprite-atlas.png", column: 1, row: 1, columns: 4, rows: 4, visibleBounds: [0.019, 0.277, 0.963, 0.826] },
+  beam: { asset: "junk-sprite-atlas.png", column: 2, row: 1, columns: 4, rows: 4, visibleBounds: [0.041, 0.361, 0.957, 0.647] },
+  ladder: { asset: "junk-sprite-atlas.png", column: 3, row: 1, columns: 4, rows: 4, visibleBounds: [0.290, 0, 0.676, 0.992] },
+  pipes: { asset: "junk-sprite-atlas.png", column: 0, row: 2, columns: 4, rows: 4, visibleBounds: [0.041, 0.284, 0.979, 0.794] },
+  crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4, visibleBounds: [0.089, 0.153, 0.928, 0.998] },
+  fridge: { asset: "junk-sprite-atlas.png", column: 2, row: 2, columns: 4, rows: 4, visibleBounds: [0.239, 0.013, 0.746, 0.950] },
+  washer: { asset: "junk-sprite-atlas.png", column: 3, row: 2, columns: 4, rows: 4, visibleBounds: [0.159, 0.045, 0.810, 0.938] },
+  computer: { asset: "monitor", column: 0, row: 0, columns: 1, rows: 1, visibleBounds: [0.079, 0.026, 0.921, 0.973] },
+  scaffold: { asset: "junk-sprite-atlas.png", column: 1, row: 3, columns: 4, rows: 4, visibleBounds: [0.131, 0, 0.899, 0.919] },
+  barrel: { asset: "junk-sprite-atlas.png", column: 2, row: 3, columns: 4, rows: 4, visibleBounds: [0.230, 0.013, 0.759, 0.909] },
+  tire: { asset: "junk-sprite-atlas.png", column: 3, row: 3, columns: 4, rows: 4, visibleBounds: [0.089, 0.045, 0.880, 0.852] },
+  bicycle: { asset: "risky-props.png", column: 0, row: 0, columns: 2, rows: 1, visibleBounds: [0.025, 0.088, 1, 0.883] },
+  chair: { asset: "risky-props.png", column: 1, row: 0, columns: 2, rows: 1, visibleBounds: [0, 0.082, 0.944, 0.929] },
 };
 
 const ITEM_ICON_ART: Record<ItemId, IconSprite> = {
@@ -256,10 +265,10 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
   },
 };
 
-// One world metre equals 10 pixels. Scale the real-world-inspired prop
+// One world metre equals 12 pixels. Scale the real-world-inspired prop
 // dimensions down to that same scene measure, so a container or car no longer
 // reads as a large fraction of the entire 99 m climb.
-const PROP_SCALE = 0.32;
+const PROP_SCALE = 0.38;
 Object.values(ITEMS).forEach((item) => {
   item.width = Math.round(item.width * PROP_SCALE);
   item.height = Math.round(item.height * PROP_SCALE);
@@ -923,7 +932,7 @@ class TowerPhysicsGame {
   private automaticCameraOffset() {
     // Follow a growing tower, but preserve the player's manual pan to inspect
     // any section of the complete 0–99 m ruler.
-    return clamp(VIEW_GROUND_CAMERA + clamp(this.height, 0, 99) * 2.35, MIN_CAMERA_OFFSET, MAX_CAMERA_OFFSET);
+    return clamp(VIEW_GROUND_CAMERA + clamp(this.height, 0, 99) * 2.82, MIN_CAMERA_OFFSET, MAX_CAMERA_OFFSET);
   }
 
   private imageReady(image: HTMLImageElement) {
@@ -960,7 +969,7 @@ class TowerPhysicsGame {
       ctx.save();
       ctx.globalAlpha = 0.94 - illuminate * 0.2;
       // Keep the ruin strip grounded instead of floating in the build space.
-      ctx.drawImage(this.artwork.debris, 0, BASE_Y - 170, WORLD_WIDTH, BACKDROP_BOTTOM - (BASE_Y - 170));
+      ctx.drawImage(this.artwork.debris, 0, BASE_Y - 204, WORLD_WIDTH, BACKDROP_BOTTOM - (BASE_Y - 204));
       ctx.restore();
     }
     this.drawGoalRig(this.activationProgress());
@@ -1018,10 +1027,10 @@ class TowerPhysicsGame {
     const ctx = this.context;
     const basketX = GOAL_BASKET_X;
     const basketY = GOAL_BASKET_Y;
-    const boomY = basketY - 150;
+    const boomY = basketY - 180;
     ctx.save();
     ctx.strokeStyle = "rgba(41, 50, 49, 0.94)";
-    ctx.lineWidth = 11;
+    ctx.lineWidth = 13;
     ctx.lineCap = "square";
     ctx.beginPath();
     ctx.moveTo(-30, boomY);
@@ -1029,21 +1038,21 @@ class TowerPhysicsGame {
     ctx.stroke();
     ctx.strokeStyle = "rgba(102, 106, 92, 0.52)";
     ctx.lineWidth = 2;
-    for (let x = 18; x < basketX - 20; x += 52) {
+    for (let x = 18; x < basketX - 24; x += 62) {
       ctx.beginPath();
-      ctx.moveTo(x, boomY + 6);
-      ctx.lineTo(x + 27, boomY + 31);
-      ctx.lineTo(x + 52, boomY + 6);
+      ctx.moveTo(x, boomY + 7);
+      ctx.lineTo(x + 32, boomY + 37);
+      ctx.lineTo(x + 62, boomY + 7);
       ctx.stroke();
     }
     ctx.strokeStyle = "rgba(27, 34, 33, 0.92)";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3.5;
     ctx.beginPath();
-    ctx.moveTo(basketX, boomY + 4);
-    ctx.lineTo(basketX, basketY - 65);
+    ctx.moveTo(basketX, boomY + 5);
+    ctx.lineTo(basketX, basketY - 78);
     ctx.stroke();
     if (this.imageReady(this.artwork.goal)) {
-      ctx.drawImage(this.artwork.goal, basketX - 64, basketY - 72, 128, 144);
+      ctx.drawImage(this.artwork.goal, basketX - 77, basketY - 86, 154, 172);
     } else {
       ctx.strokeStyle = "rgba(137, 133, 100, 0.92)";
       ctx.lineWidth = 3;
@@ -1061,18 +1070,18 @@ class TowerPhysicsGame {
     }
     // A long, slightly swaying rescue rope gives the suspended basket a clear
     // vertical connection that remains visible in the same phone viewport.
-    const ropeStartY = basketY + 47;
-    const ropeEndY = basketY + 325;
-    const ropeSway = Math.sin(this.elapsed / 760) * 4;
+    const ropeStartY = basketY + 56;
+    const ropeEndY = basketY + 390;
+    const ropeSway = Math.sin(this.elapsed / 760) * 5;
     ctx.lineCap = "round";
     ctx.strokeStyle = "rgba(29, 28, 23, 0.92)";
-    ctx.lineWidth = 4.5;
+    ctx.lineWidth = 5.4;
     ctx.beginPath();
     ctx.moveTo(basketX + 10, ropeStartY);
     ctx.bezierCurveTo(basketX + 8 + ropeSway, basketY + 136, basketX - 4 - ropeSway, basketY + 230, basketX + ropeSway, ropeEndY);
     ctx.stroke();
     ctx.strokeStyle = "rgba(169, 143, 94, 0.74)";
-    ctx.lineWidth = 1.3;
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
     ctx.moveTo(basketX + 10, ropeStartY);
     ctx.bezierCurveTo(basketX + 8 + ropeSway, basketY + 136, basketX - 4 - ropeSway, basketY + 230, basketX + ropeSway, ropeEndY);
@@ -1397,11 +1406,16 @@ class TowerPhysicsGame {
     if (!this.imageReady(image)) return false;
     const sourceWidth = image.naturalWidth / sprite.columns;
     const sourceHeight = image.naturalHeight / sprite.rows;
-    // Crop away the atlas-cell safety margin rather than scaling it into the
-    // world. This keeps the visible edge clean and makes the art footprint
-    // agree with the physics body used for real-world relative proportions.
-    const crop = 0.04;
-    const visualSize = Math.max(item.width, item.height) * (item.shape === "circle" ? 1.02 : 1);
+    const [left, top, right, bottom] = sprite.visibleBounds;
+    const cropX = sprite.column * sourceWidth + sourceWidth * left;
+    const cropY = sprite.row * sourceHeight + sourceHeight * top;
+    const cropWidth = sourceWidth * (right - left);
+    const cropHeight = sourceHeight * (bottom - top);
+    // Map the tightly-trimmed artwork to the Matter body instead of to a
+    // square atlas cell. A very small vertical overlap covers Matter's normal
+    // contact slop, so two pieces that are physically touching also look
+    // seamless rather than leaving a distracting transparent gap.
+    const seamBleed = Math.min(1.5, Math.max(0.8, item.height * 0.08));
     const ctx = this.context;
     const previousAlpha = ctx.globalAlpha;
     const previousFilter = ctx.filter;
@@ -1412,14 +1426,14 @@ class TowerPhysicsGame {
     ctx.filter = "saturate(0.58) brightness(0.76) contrast(1.14) sepia(0.13)";
     ctx.drawImage(
       image,
-      sprite.column * sourceWidth + sourceWidth * crop,
-      sprite.row * sourceHeight + sourceHeight * crop,
-      sourceWidth * (1 - crop * 2),
-      sourceHeight * (1 - crop * 2),
-      -visualSize / 2,
-      -visualSize / 2,
-      visualSize,
-      visualSize,
+      cropX,
+      cropY,
+      cropWidth,
+      cropHeight,
+      -item.width / 2,
+      -item.height / 2 - seamBleed,
+      item.width,
+      item.height + seamBleed * 2,
     );
     ctx.globalAlpha = previousAlpha;
     ctx.filter = previousFilter;

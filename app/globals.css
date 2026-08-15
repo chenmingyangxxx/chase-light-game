@@ -443,7 +443,15 @@ body {
 .minimal-game .height-reading strong { font-size: 30px; }
 .minimal-game .ruler-wrap { min-height: 0; margin: 15px 14px 2px; }
 .minimal-game .stage-stack { order: 1; min-height: 0; }
-.minimal-game .canvas-wrap { height: auto; min-height: 0; aspect-ratio: 18 / 25; border-radius: 14px; }
+.minimal-game .canvas-wrap {
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 18 / 25;
+  border: 1px solid rgba(226, 239, 218, 0.28);
+  border-radius: 14px;
+  background: #132123;
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.36), inset 0 1px rgba(248, 255, 237, 0.12);
+}
 .minimal-game .scene-instruction { top: auto; bottom: 12px; max-width: calc(100% - 98px); padding: 6px 10px; font-size: 10px; }
 
 .reset-action {
@@ -456,10 +464,10 @@ body {
   height: 40px;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(235, 242, 216, 0.2);
-  border-radius: 10px;
-  color: #dbe9d2;
-  background: linear-gradient(180deg, rgba(31, 56, 53, 0.94), rgba(11, 28, 30, 0.96));
+  border: 1px solid rgba(232, 244, 220, 0.34);
+  border-radius: 9px;
+  color: #e8f1df;
+  background: rgba(31, 53, 50, 0.78);
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;
@@ -467,9 +475,11 @@ body {
   letter-spacing: 0.16em;
   text-indent: 0.16em;
   line-height: 1;
-  backdrop-filter: blur(8px);
+  box-shadow: inset 0 1px rgba(255, 255, 243, 0.1), 0 6px 14px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(14px) saturate(0.8);
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
 }
-.reset-action:hover { border-color: rgba(255, 217, 126, 0.62); color: #ffe5a1; }
+.reset-action:hover { border-color: rgba(255, 217, 126, 0.68); color: #ffe5a1; background: rgba(58, 77, 62, 0.88); transform: translateY(-1px); }
 
 .minimal-game .inventory-panel {
   position: absolute;
@@ -481,20 +491,24 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 8px 6px;
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(11, 28, 30, 0.88), rgba(6, 18, 20, 0.76));
-  box-shadow: inset 0 1px rgba(198, 222, 188, 0.08), 0 8px 20px rgba(0, 0, 0, 0.18);
+  padding: 9px 6px 7px;
+  border: 1px solid rgba(226, 239, 218, 0.22);
+  border-radius: 11px;
+  background: rgba(15, 34, 35, 0.72);
+  box-shadow: inset 0 1px rgba(246, 255, 235, 0.11), 0 10px 22px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(14px) saturate(0.78);
 }
-.minimal-game .inventory-head { flex: 0 0 auto; align-items: center; padding: 0 1px 7px; }
-.minimal-game .inventory-head strong { color: #eef5df; font-size: 11px; }
-.minimal-game .inventory-head > span { min-width: 21px; padding: 2px 5px; border-radius: 999px; color: #effbd9; background: rgba(170, 218, 112, 0.16); font-size: 9px; font-weight: 800; text-align: center; }
-.minimal-game .inventory-list { display: flex; flex: 1 1 auto; min-height: 0; height: auto; max-height: none; flex-direction: column; gap: 5px; padding: 6px 0 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
-.minimal-game .material-card { position: relative; width: 100%; min-width: 0; flex: 0 0 auto; grid-template-columns: 35px minmax(0, 1fr); min-height: 47px; padding: 5px; border-radius: 7px; }
-.minimal-game .material-icon { width: 34px; height: 34px; }
+.minimal-game .inventory-head { flex: 0 0 auto; align-items: center; padding: 0 2px 8px; border-bottom: 1px solid rgba(231, 242, 221, 0.13); }
+.minimal-game .inventory-head strong { color: #f0f5e7; font-size: 11px; font-weight: 800; letter-spacing: 0.08em; }
+.minimal-game .inventory-head > span { min-width: 22px; padding: 2px 5px; border: 1px solid rgba(200, 234, 144, 0.24); border-radius: 999px; color: #effbd9; background: rgba(150, 192, 98, 0.18); font-size: 9px; font-weight: 800; text-align: center; }
+.minimal-game .inventory-list { display: flex; flex: 1 1 auto; min-height: 0; height: auto; max-height: none; flex-direction: column; gap: 5px; padding: 7px 0 0; overflow-x: hidden; overflow-y: auto; scrollbar-color: rgba(174, 214, 156, 0.48) transparent; scrollbar-width: thin; }
+.minimal-game .material-card { position: relative; width: 100%; min-width: 0; flex: 0 0 auto; grid-template-columns: 37px minmax(0, 1fr); min-height: 48px; padding: 5px; border: 1px solid rgba(232, 243, 222, 0.15); border-radius: 7px; background: rgba(226, 240, 216, 0.055); box-shadow: inset 0 1px rgba(255, 255, 249, 0.04); }
+.minimal-game .material-card:hover:not(:disabled) { transform: translateX(-1px); border-color: rgba(229, 244, 177, 0.56); background: rgba(173, 207, 137, 0.13); }
+.minimal-game .material-card.recommended { border-color: rgba(215, 245, 157, 0.78); background: rgba(178, 226, 124, 0.16); }
+.minimal-game .material-icon { width: 36px; height: 36px; border-color: rgba(241, 243, 216, 0.28); border-radius: 6px; background-color: rgba(5, 17, 18, 0.56); }
 .minimal-game .material-copy { min-width: 0; }
-.minimal-game .material-copy b { display: block; overflow: hidden; color: #dbe8d3; font-size: 9px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
-.minimal-game .material-count { position: absolute; top: 3px; right: 3px; padding: 1px 3px; border-radius: 4px; color: #dff0c9; background: rgba(24, 49, 40, 0.78); font-size: 9px; line-height: 1.1; }
+.minimal-game .material-copy b { display: block; overflow: hidden; color: #edf4e8; font-size: 9px; font-weight: 700; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.minimal-game .material-count { position: absolute; top: 3px; right: 3px; padding: 1px 3px; border: 1px solid rgba(188, 226, 145, 0.18); border-radius: 4px; color: #e8f6d8; background: rgba(45, 76, 52, 0.82); font-size: 9px; line-height: 1.1; }
 
 @media (max-width: 860px) {
   .minimal-game .canvas-wrap { min-height: 470px; }
