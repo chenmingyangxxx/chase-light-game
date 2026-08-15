@@ -409,10 +409,13 @@ class GameAudio {
   private effects: GainNode | null = null;
   private ambience: GainNode | null = null;
   private ambientSources: AudioScheduledSourceNode[] = [];
+  private ambienceStopTimer: number | null = null;
   private enabled = true;
   private gameplayActive = false;
   private lastImpactAt = 0;
   private lastStrainAt = 0;
+  private readonly masterLevel = 0.66;
+  private readonly ambienceLevel = 0.3;
 
   async unlock() {
     if (!this.context) {
@@ -420,12 +423,19 @@ class GameAudio {
       const master = context.createGain();
       const effects = context.createGain();
       const ambience = context.createGain();
-      master.gain.value = this.enabled ? 0.72 : 0;
-      effects.gain.value = 0.92;
-      ambience.gain.value = 0.34;
+      const limiter = context.createDynamicsCompressor();
+      master.gain.value = this.enabled ? this.masterLevel : 0;
+      effects.gain.value = 0.72;
+      ambience.gain.value = 0;
+      limiter.threshold.value = -22;
+      limiter.knee.value = 18;
+      limiter.ratio.value = 4;
+      limiter.attack.value = 0.004;
+      limiter.release.value = 0.22;
       effects.connect(master);
       ambience.connect(master);
-      master.connect(context.destination);
+      master.connect(limiter);
+      limiter.connect(context.destination);
       this.context = context;
       this.master = master;
       this.effects = effects;
@@ -434,6 +444,7 @@ class GameAudio {
     if (this.context.state === "suspended") await this.context.resume();
     if (this.gameplayActive) {
       this.startAmbience();
+      this.rampAmbience(this.ambienceLevel, 1200);
     }
   }
 
@@ -442,52 +453,64 @@ class GameAudio {
     if (!this.context || !this.master) return;
     const now = this.context.currentTime;
     this.master.gain.cancelScheduledValues(now);
-    this.master.gain.setTargetAtTime(enabled ? 0.72 : 0, now, 0.035);
+    this.master.gain.setTargetAtTime(enabled ? this.masterLevel : 0, now, 0.05);
     if (enabled && this.gameplayActive) {
       this.startAmbience();
+      this.rampAmbience(this.ambienceLevel, 900);
     }
   }
 
   startGameplay() {
     this.gameplayActive = true;
+    if (this.ambienceStopTimer !== null) {
+      window.clearTimeout(this.ambienceStopTimer);
+      this.ambienceStopTimer = null;
+    }
     this.startAmbience();
+    this.rampAmbience(this.ambienceLevel, 1500);
   }
 
-  stopGameplay() {
+  stopGameplay(fadeMs = 800) {
     this.gameplayActive = false;
-    this.stopAmbience();
+    this.rampAmbience(0, fadeMs);
+    if (this.ambienceStopTimer !== null) window.clearTimeout(this.ambienceStopTimer);
+    this.ambienceStopTimer = window.setTimeout(() => {
+      this.stopAmbience();
+      this.ambienceStopTimer = null;
+    }, fadeMs + 80);
   }
 
   ui() {
-    this.tone(640, 920, 0.065, 0.038, "triangle");
+    this.tone(390, 285, 0.065, 0.018, "triangle");
+    this.tone(165, 118, 0.075, 0.011, "sine", 0.012);
   }
 
   hint() {
-    this.tone(520, 780, 0.11, 0.045, "sine");
-    this.tone(780, 1040, 0.1, 0.032, "sine", 0.075);
+    this.tone(430, 560, 0.12, 0.026, "sine");
+    this.tone(560, 720, 0.12, 0.021, "sine", 0.085);
   }
 
   pickup(item: ItemDefinition) {
     const mass = ITEM_PHYSICS[item.id].massKg;
     const base = clamp(430 - Math.log10(Math.max(1, mass)) * 95, 145, 390);
-    this.tone(base * 1.35, base, 0.085, 0.052, "triangle");
-    this.noise(0.045, 0.02, 2300);
+    this.tone(base * 1.22, base, 0.08, 0.03, "triangle");
+    this.noise(0.035, 0.009, 1700);
   }
 
   place(item: ItemDefinition) {
     const mass = ITEM_PHYSICS[item.id].massKg;
     const weight = clamp(Math.log10(Math.max(10, mass)) / 3.4, 0.25, 1);
-    this.tone(125 + (1 - weight) * 70, 58 + (1 - weight) * 35, 0.16, 0.065 + weight * 0.035, "sine");
-    this.noise(0.1, 0.025 + weight * 0.025, 900 + (1 - weight) * 900);
+    this.tone(118 + (1 - weight) * 62, 62 + (1 - weight) * 26, 0.13, 0.035 + weight * 0.022, "sine");
+    this.noise(0.075, 0.012 + weight * 0.015, 760 + (1 - weight) * 760);
   }
 
   impact(intensity: number) {
     const nowMs = performance.now();
-    if (nowMs - this.lastImpactAt < 95 || intensity < 0.07) return;
+    if (nowMs - this.lastImpactAt < 170 || intensity < 0.1) return;
     this.lastImpactAt = nowMs;
-    const strength = clamp(intensity, 0.08, 1);
-    this.tone(110, 48, 0.09 + strength * 0.08, 0.025 + strength * 0.055, "sine");
-    this.noise(0.05 + strength * 0.07, 0.012 + strength * 0.035, 680 + strength * 1200);
+    const strength = clamp(intensity, 0.1, 1);
+    this.tone(105, 52, 0.085 + strength * 0.06, 0.018 + strength * 0.032, "sine");
+    this.noise(0.045 + strength * 0.05, 0.006 + strength * 0.018, 620 + strength * 900);
   }
 
   strain(stress: number) {
@@ -495,23 +518,30 @@ class GameAudio {
     if (nowMs - this.lastStrainAt < 680) return;
     this.lastStrainAt = nowMs;
     const amount = clamp(stress, 0, 2);
-    this.tone(190 + amount * 28, 88, 0.32, 0.025 + amount * 0.018, "sawtooth");
-    this.noise(0.24, 0.022 + amount * 0.012, 520);
+    this.tone(165 + amount * 20, 82, 0.3, 0.015 + amount * 0.01, "triangle");
+    this.noise(0.2, 0.01 + amount * 0.006, 460);
+  }
+
+  climbStart() {
+    this.duckAmbience(0.72, 620);
+    this.tone(148, 196, 0.18, 0.018, "triangle");
+    this.tone(82, 104, 0.22, 0.024, "sine", 0.075);
   }
 
   robotStep(step: number) {
     const variation = (step % 3) * 7;
     // A soft joint servo, padded foot contact and brief metal grip. Avoid the
     // former rising square wave, which sounded like an electronic alert.
-    this.tone(176 + variation, 128 + variation * 0.5, 0.14, 0.018, "triangle");
-    this.tone(94 + variation * 0.35, 58, 0.16, 0.034, "sine", 0.028);
-    this.noise(0.065, 0.009, 760);
+    this.tone(168 + variation, 126 + variation * 0.45, 0.13, 0.014, "triangle");
+    this.tone(90 + variation * 0.3, 58, 0.15, 0.024, "sine", 0.026);
+    this.noise(0.055, 0.005, 680);
   }
 
   failure() {
-    this.tone(210, 46, 0.68, 0.105, "sawtooth");
-    this.noise(0.72, 0.09, 560);
-    this.tone(118, 38, 0.58, 0.075, "sine", 0.18);
+    this.duckAmbience(0.48, 1600);
+    this.tone(188, 58, 0.54, 0.052, "triangle");
+    this.noise(0.48, 0.038, 470);
+    this.tone(104, 42, 0.5, 0.046, "sine", 0.16);
   }
 
   private startAmbience() {
@@ -592,6 +622,28 @@ class GameAudio {
       source.disconnect();
     });
     this.ambientSources = [];
+    if (this.ambience) this.ambience.gain.value = 0;
+  }
+
+  private rampAmbience(target: number, durationMs: number) {
+    if (!this.context || !this.ambience) return;
+    const now = this.context.currentTime;
+    const gain = this.ambience.gain;
+    gain.cancelScheduledValues(now);
+    gain.setValueAtTime(gain.value, now);
+    gain.linearRampToValueAtTime(Math.max(0, target), now + Math.max(0.05, durationMs / 1000));
+  }
+
+  private duckAmbience(factor: number, holdMs: number) {
+    if (!this.context || !this.ambience || !this.gameplayActive) return;
+    const now = this.context.currentTime;
+    const gain = this.ambience.gain;
+    const ducked = this.ambienceLevel * clamp(factor, 0, 1);
+    gain.cancelScheduledValues(now);
+    gain.setValueAtTime(gain.value, now);
+    gain.linearRampToValueAtTime(ducked, now + 0.12);
+    gain.setValueAtTime(ducked, now + 0.12 + holdMs / 1000);
+    gain.linearRampToValueAtTime(this.ambienceLevel, now + 0.62 + holdMs / 1000);
   }
 
   private tone(
@@ -1355,6 +1407,7 @@ class TowerPhysicsGame {
     this.status = "activating";
     this.activationAt = this.elapsed;
     this.lastRobotAudioStep = -1;
+    this.audio.climbStart();
     this.dynamicBodies.forEach((body) => Matter.Sleeping.set(body, false));
     // Start the cinematic at ground level even if the player was inspecting
     // the top of the tower, then hand control to the robot-follow camera.
@@ -2308,6 +2361,24 @@ function smoothStep(value: number) {
   return t * t * (3 - 2 * t);
 }
 
+function fadeMediaVolume(media: HTMLMediaElement, targetVolume: number, durationMs: number, pauseAtEnd = false) {
+  let frameId = 0;
+  const startVolume = media.volume;
+  const target = clamp(targetVolume, 0, 1);
+  const startedAt = performance.now();
+  const tick = (now: number) => {
+    const progress = smoothStep((now - startedAt) / Math.max(80, durationMs));
+    media.volume = clamp(startVolume + (target - startVolume) * progress, 0, 1);
+    if (progress < 1) {
+      frameId = requestAnimationFrame(tick);
+      return;
+    }
+    if (pauseAtEnd && target <= 0.001) media.pause();
+  };
+  frameId = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(frameId);
+}
+
 function colorMix(from: [number, number, number], to: [number, number, number], amount: number) {
   const mix = (index: number) => Math.round(from[index] + (to[index] - from[index]) * amount);
   return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`;
@@ -2364,22 +2435,25 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const gameRef = useRef<TowerPhysicsGame | null>(null);
   const endingVideoRef = useRef<HTMLVideoElement>(null);
   const endingMusicRef = useRef<HTMLAudioElement>(null);
+  const endingMusicFadeRef = useRef<(() => void) | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
   const [endingComplete, setEndingComplete] = useState(false);
   const [endingNeedsGesture, setEndingNeedsGesture] = useState(false);
   const [endingReady, setEndingReady] = useState(false);
+  const [endingLeaving, setEndingLeaving] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     audio.startGameplay();
     const game = new TowerPhysicsGame(canvas, level, setSnapshot, () => {
-      audio.stopGameplay();
+      audio.stopGameplay(1100);
       setEndingComplete(false);
       setEndingNeedsGesture(false);
       setEndingReady(false);
+      setEndingLeaving(false);
       setEndingPlaying(true);
     }, audio);
     gameRef.current = game;
@@ -2407,8 +2481,17 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
     if (!video || !soundtrack) return;
     video.currentTime = 0;
     soundtrack.currentTime = 0;
-    soundtrack.volume = 1;
-    void Promise.all([video.play(), soundtrack.play()]).catch(() => setEndingNeedsGesture(true));
+    soundtrack.volume = 0.02;
+    endingMusicFadeRef.current?.();
+    void Promise.all([video.play(), soundtrack.play()])
+      .then(() => {
+        endingMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.72, 1100);
+      })
+      .catch(() => setEndingNeedsGesture(true));
+    return () => {
+      endingMusicFadeRef.current?.();
+      endingMusicFadeRef.current = null;
+    };
   }, [endingPlaying]);
 
   const isInteractive = snapshot.status === "building";
@@ -2553,9 +2636,16 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                   onClick={() => {
                     setEndingNeedsGesture(false);
                     const videoPlayback = endingVideoRef.current?.play();
-                    const soundtrackPlayback = endingMusicRef.current?.play();
+                    const soundtrack = endingMusicRef.current;
+                    const soundtrackPlayback = soundtrack?.play();
                     const attempts = [videoPlayback, soundtrackPlayback].filter((attempt): attempt is Promise<void> => Boolean(attempt));
-                    void Promise.all(attempts).catch(() => setEndingNeedsGesture(true));
+                    void Promise.all(attempts)
+                      .then(() => {
+                        if (!soundtrack) return;
+                        endingMusicFadeRef.current?.();
+                        endingMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.72, 900);
+                      })
+                      .catch(() => setEndingNeedsGesture(true));
                   }}
                 >
                   播放结局与音乐
@@ -2575,16 +2665,23 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                   <button
                     className="ending-home-button"
                     type="button"
+                    disabled={endingLeaving}
                     onClick={() => {
+                      if (endingLeaving) return;
                       audio.ui();
+                      setEndingLeaving(true);
                       const soundtrack = endingMusicRef.current;
                       if (soundtrack) {
-                        soundtrack.pause();
-                        soundtrack.currentTime = 0;
+                        endingMusicFadeRef.current?.();
+                        endingMusicFadeRef.current = fadeMediaVolume(soundtrack, 0, 700, true);
                       }
-                      setEndingPlaying(false);
-                      setEndingComplete(false);
-                      onExit();
+                      window.setTimeout(() => {
+                        if (soundtrack) soundtrack.currentTime = 0;
+                        setEndingPlaying(false);
+                        setEndingComplete(false);
+                        setEndingLeaving(false);
+                        onExit();
+                      }, 720);
                     }}
                   >
                     返回主页
@@ -2603,6 +2700,7 @@ export function DawnTowerGame() {
   const level = LEVELS[0];
   const audioRef = useRef<GameAudio | null>(null);
   const launchAudioRef = useRef<HTMLAudioElement>(null);
+  const launchAudioFadeRef = useRef<(() => void) | null>(null);
   if (!audioRef.current) audioRef.current = new GameAudio();
   const audio = audioRef.current;
   const [loading, setLoading] = useState(8);
@@ -2612,33 +2710,26 @@ export function DawnTowerGame() {
   const [sceneLoading, setSceneLoading] = useState(false);
   const [sceneLoadProgress, setSceneLoadProgress] = useState(0);
 
+  const fadeLaunchMusicTo = (target: number, durationMs: number, pauseAtEnd = false) => {
+    const player = launchAudioRef.current;
+    if (!player) return;
+    launchAudioFadeRef.current?.();
+    launchAudioFadeRef.current = fadeMediaVolume(player, target, durationMs, pauseAtEnd);
+  };
+
   const ensureAutomaticSound = async () => {
     try {
       await audio.unlock();
       audio.setEnabled(true);
       const player = launchAudioRef.current;
       if (!started && !sceneLoading && player?.paused) {
-        player.volume = 0.78;
+        player.volume = 0.03;
         await player.play();
+        fadeLaunchMusicTo(0.72, 1000);
       }
     } catch {
       // Audible autoplay is retried silently on the first player interaction.
     }
-  };
-
-  const fadeOutLaunchMusic = () => {
-    const player = launchAudioRef.current;
-    if (!player) return;
-    const startVolume = player.volume;
-    let step = 0;
-    const timer = window.setInterval(() => {
-      step += 1;
-      player.volume = Math.max(0, startVolume * (1 - step / 12));
-      if (step < 12) return;
-      window.clearInterval(timer);
-      player.pause();
-      player.volume = 0.78;
-    }, 50);
   };
 
   const startGame = async () => {
@@ -2651,7 +2742,9 @@ export function DawnTowerGame() {
     } catch {
       // Gameplay audio will retry on the next interaction if it is blocked.
     }
-    fadeOutLaunchMusic();
+    // Keep the film score underneath the loading page, then hand it over to
+    // the clean construction ambience after the game scene is ready.
+    fadeLaunchMusicTo(0.2, 1050);
     window.setTimeout(() => {
       setSceneLoadProgress(0);
       setSceneLoading(true);
@@ -2685,11 +2778,17 @@ export function DawnTowerGame() {
   }, [started]);
 
   useEffect(() => {
-    if (started || sceneLoading) return;
     const player = launchAudioRef.current;
     if (!player) return;
-    player.volume = 0.78;
-    void player.play().catch(() => undefined);
+    if (started) {
+      fadeLaunchMusicTo(0, 1250, true);
+      return;
+    }
+    if (sceneLoading) return;
+    if (player.paused) player.volume = 0.03;
+    void player.play()
+      .then(() => fadeLaunchMusicTo(0.72, 1200))
+      .catch(() => undefined);
   }, [sceneLoading, started]);
 
   useEffect(() => {
@@ -2701,27 +2800,38 @@ export function DawnTowerGame() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [guideOpen]);
 
+  const launchSoundtrack = (
+    <audio key="launch-soundtrack" ref={launchAudioRef} loop preload="auto" aria-hidden="true">
+      <source src="/assets/launch-original-with-music.mp4" type="audio/mp4" />
+    </audio>
+  );
+
   if (!started) {
     const ready = loading >= 100;
     if (sceneLoading) {
       return (
-        <main className="scene-loading-screen" aria-live="polite" aria-label={`正在进入游戏场景 ${sceneLoadProgress}%`}>
-          <div className="scene-loading-visual" aria-hidden="true">
-            <span className="scene-loading-ring" />
-            <b className="scene-loading-percent">{sceneLoadProgress}%</b>
-          </div>
-          <strong>正在进入废土</strong>
-          <span>光在 99 米之上</span>
-        </main>
+        <>
+          {launchSoundtrack}
+          <main className="scene-loading-screen" aria-live="polite" aria-label={`正在进入游戏场景 ${sceneLoadProgress}%`}>
+            <div className="scene-loading-visual" aria-hidden="true">
+              <span className="scene-loading-ring" />
+              <b className="scene-loading-percent">{sceneLoadProgress}%</b>
+            </div>
+            <strong>正在进入废土</strong>
+            <span>光在 99 米之上</span>
+          </main>
+        </>
       );
     }
     return (
-      <main
-        className={launchLeaving ? "launch-screen is-leaving" : "launch-screen"}
-        aria-labelledby="launch-title"
-        onPointerDown={() => { void ensureAutomaticSound(); }}
-        onKeyDown={() => { void ensureAutomaticSound(); }}
-      >
+      <>
+        {launchSoundtrack}
+        <main
+          className={launchLeaving ? "launch-screen is-leaving" : "launch-screen"}
+          aria-labelledby="launch-title"
+          onPointerDown={() => { void ensureAutomaticSound(); }}
+          onKeyDown={() => { void ensureAutomaticSound(); }}
+        >
         <video
           className="launch-art"
           autoPlay
@@ -2734,9 +2844,6 @@ export function DawnTowerGame() {
         >
           <source src="/assets/launch-background-pingpong.mp4" type="video/mp4" />
         </video>
-        <audio ref={launchAudioRef} loop preload="auto" aria-hidden="true">
-          <source src="/assets/launch-original-with-music.mp4" type="audio/mp4" />
-        </audio>
         <div className="launch-shade" aria-hidden="true" />
         {!ready && (
           <div className="launch-loader" role="status" aria-label={`正在载入游戏 ${loading}%`}>
@@ -2835,22 +2942,26 @@ export function DawnTowerGame() {
             </section>
           </div>
         )}
-      </main>
+        </main>
+      </>
     );
   }
 
   return (
-    <main className="game-app minimal-game is-entering">
-      <h1 className="sr-only">追.光</h1>
-      <GameStage
-        key={level.id}
-        level={level}
-        audio={audio}
-        onExit={() => {
-          audio.stopGameplay();
-          setStarted(false);
-        }}
-      />
-    </main>
+    <>
+      {launchSoundtrack}
+      <main className="game-app minimal-game is-entering">
+        <h1 className="sr-only">追.光</h1>
+        <GameStage
+          key={level.id}
+          level={level}
+          audio={audio}
+          onExit={() => {
+            audio.stopGameplay();
+            setStarted(false);
+          }}
+        />
+      </main>
+    </>
   );
 }
