@@ -449,18 +449,23 @@ body {
 .reset-action {
   position: absolute;
   z-index: 4;
-  top: 10px;
-  right: 10px;
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
+  right: 7px;
+  bottom: 7px;
+  display: flex;
+  width: 112px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
   border: 1px solid rgba(235, 242, 216, 0.2);
-  border-radius: 50%;
+  border-radius: 10px;
   color: #dbe9d2;
-  background: rgba(4, 15, 17, 0.66);
+  background: linear-gradient(180deg, rgba(31, 56, 53, 0.94), rgba(11, 28, 30, 0.96));
   cursor: pointer;
-  font-size: 16px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
   line-height: 1;
   backdrop-filter: blur(8px);
 }
@@ -471,7 +476,7 @@ body {
   z-index: 3;
   top: 47px;
   right: 7px;
-  bottom: 7px;
+  bottom: 55px;
   width: 112px;
   display: flex;
   flex-direction: column;

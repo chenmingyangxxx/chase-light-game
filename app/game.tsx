@@ -1465,7 +1465,7 @@ function GameStage({ level }: GameStageProps) {
               gameRef.current?.panCamera(event.deltaY);
             }}
           />
-          {isInteractive && <button className="reset-action" type="button" aria-label="重新开始本关" onClick={() => gameRef.current?.restart()}>↻</button>}
+          {isInteractive && <button className="reset-action" type="button" aria-label="重置本关" onClick={() => gameRef.current?.restart()}>重置</button>}
           {snapshot.status === "activating" && (
             <div className="activation-strip" aria-live="polite">
               <span>地表复苏中</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
