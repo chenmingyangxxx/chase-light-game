@@ -16,7 +16,6 @@ const BASE_X = 306;
 // can be inspected by panning, rather than being compressed into one viewport.
 const BASE_Y = 1860;
 const PIXELS_PER_METER = 10;
-const STACK_PLATFORM_WIDTH = 242;
 const GOAL_BASKET_X = BASE_X + 14;
 const RECOVERY_Y = BASE_Y + 94;
 const BACKDROP_TOP = 600;
@@ -50,7 +49,7 @@ type ItemId =
 type GameStatus = "building" | "activating" | "cleared" | "failed";
 
 interface ArtSprite {
-  asset: "junk-sprite-atlas.png" | "risky-props.png";
+  asset: "junk-sprite-atlas.png" | "risky-props.png" | "monitor";
   column: number;
   row: number;
   columns: number;
@@ -147,7 +146,7 @@ const ITEM_ART: Record<ItemId, ArtSprite> = {
   crate: { asset: "junk-sprite-atlas.png", column: 1, row: 2, columns: 4, rows: 4 },
   fridge: { asset: "junk-sprite-atlas.png", column: 2, row: 2, columns: 4, rows: 4 },
   washer: { asset: "junk-sprite-atlas.png", column: 3, row: 2, columns: 4, rows: 4 },
-  computer: { asset: "junk-sprite-atlas.png", column: 0, row: 3, columns: 4, rows: 4 },
+  computer: { asset: "monitor", column: 0, row: 0, columns: 1, rows: 1 },
   scaffold: { asset: "junk-sprite-atlas.png", column: 1, row: 3, columns: 4, rows: 4 },
   barrel: { asset: "junk-sprite-atlas.png", column: 2, row: 3, columns: 4, rows: 4 },
   tire: { asset: "junk-sprite-atlas.png", column: 3, row: 3, columns: 4, rows: 4 },
@@ -178,17 +177,15 @@ const ITEM_ICON_ART: Record<ItemId, IconSprite> = {
 
 const ITEMS: Record<ItemId, ItemDefinition> = {
   pallet: {
-    id: "pallet", name: "木托盘", shortName: "托", role: "foundation", shape: "box", width: 126, height: 94,
+    id: "pallet", name: "木托盘", shortName: "托", role: "foundation", shape: "box", width: 108, height: 92,
     density: 0.0022, friction: 0.88, frictionStatic: 1.05, restitution: 0.01, color: "#9b6b45", accent: "#d3a271", trait: "宽 · 稳",
   },
   slab: {
-    id: "slab", name: "混凝土板", shortName: "板", role: "foundation", shape: "box", width: 140, height: 86,
+    id: "slab", name: "混凝土板", shortName: "板", role: "foundation", shape: "box", width: 120, height: 104,
     density: 0.0044, friction: 0.94, frictionStatic: 1.2, restitution: 0.005, color: "#66747a", accent: "#9ba9a9", trait: "极重 · 防滑",
   },
   container: {
-    // This is an orthographic end-front container prop, so its collider follows
-    // the visible face instead of an unrelated side-view shipping-container ratio.
-    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 177, height: 112,
+    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 145, height: 118,
     density: 0.0033, friction: 0.78, frictionStatic: 0.96, restitution: 0.01, color: "#536f74", accent: "#a2b8a7", trait: "重 · 可堆高",
   },
   car: {
@@ -228,8 +225,8 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
     density: 0.0034, friction: 0.76, frictionStatic: 0.93, restitution: 0.01, color: "#8e9e9a", accent: "#cbd6cd", trait: "方正 · 压重",
   },
   computer: {
-    id: "computer", name: "旧电脑", shortName: "机", role: "block", shape: "box", width: 64, height: 57,
-    density: 0.0018, friction: 0.64, frictionStatic: 0.74, restitution: 0.04, color: "#57636b", accent: "#9daeb5", trait: "小 · 填缝",
+    id: "computer", name: "破旧显示器", shortName: "屏", role: "block", shape: "box", width: 74, height: 55,
+    density: 0.0018, friction: 0.64, frictionStatic: 0.74, restitution: 0.04, color: "#57636b", accent: "#9daeb5", trait: "宽 · 填缝",
   },
   scaffold: {
     id: "scaffold", name: "脚手架", shortName: "架", role: "tall", shape: "box", width: 68, height: 108,
@@ -244,7 +241,7 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
     density: 0.0027, friction: 0.54, frictionStatic: 0.68, restitution: 0.2, color: "#333b3a", accent: "#9fa78c", trait: "弹性 · 可配重",
   },
   bicycle: {
-    id: "bicycle", name: "旧自行车", shortName: "车", role: "risky", shape: "box", width: 116, height: 82,
+    id: "bicycle", name: "旧自行车", shortName: "车", role: "risky", shape: "box", width: 116, height: 60,
     density: 0.0013, friction: 0.34, frictionStatic: 0.42, restitution: 0.08, color: "#6e7e5f", accent: "#d2b86a", trait: "轻 · 难稳定",
   },
   chair: {
@@ -336,7 +333,7 @@ class TowerPhysicsGame {
   private cameraManualOffsetY = 0;
   private panning: { pointerId: number; lastClientY: number } | null = null;
   private baseBody: Matter.Body | null = null;
-  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris" | "goal" | "robot", HTMLImageElement>;
+  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris" | "goal" | "robot" | "monitor", HTMLImageElement>;
 
   constructor(canvas: HTMLCanvasElement, level: LevelConfig, onUpdate: (snapshot: GameSnapshot) => void, onClear: () => void) {
     const context = canvas.getContext("2d");
@@ -353,8 +350,9 @@ class TowerPhysicsGame {
       revived: this.loadArtwork("/assets/wasteland-flat-revived.png"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
-      junk: this.loadArtwork("/assets/front-prop-atlas.png"),
-      risky: this.loadArtwork("/assets/front-risky-props.png"),
+      junk: this.loadArtwork("/assets/front-prop-atlas-v2.png"),
+      risky: this.loadArtwork("/assets/front-risky-props-v2.png"),
+      monitor: this.loadArtwork("/assets/worn-monitor.png"),
       debris: this.loadArtwork("/assets/ground-debris-foreground.png"),
       goal: this.loadArtwork("/assets/crane-basket-sprout.png"),
       robot: this.loadArtwork("/assets/sprout-helper-robot.png"),
@@ -531,16 +529,10 @@ class TowerPhysicsGame {
       friction: 0.8,
       label: "recovery-floor",
     });
-    const stackPlatform = Bodies.rectangle(BASE_X, BASE_Y - 12, STACK_PLATFORM_WIDTH, 24, {
-      isStatic: true,
-      friction: 1.08,
-      frictionStatic: 1.2,
-      label: "stack-platform",
-    });
     const leftWall = Bodies.rectangle(16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
     const rightWall = Bodies.rectangle(WORLD_WIDTH - 16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
     this.baseBody = base;
-    World.add(this.engine.world, [base, recoveryFloor, stackPlatform, leftWall, rightWall]);
+    World.add(this.engine.world, [base, recoveryFloor, leftWall, rightWall]);
   }
 
   private readonly onPointerMove = (event: PointerEvent) => {
@@ -774,17 +766,12 @@ class TowerPhysicsGame {
   private supportGraph() {
     const candidates = this.dynamicBodies.filter((body) => !this.isFallen(body));
     const depth = new Map<TaggedBody, number>();
-    candidates.forEach((body) => {
-      // Only the central platform is a valid first foundation. Open ground is
-      // intentionally excluded: every later prop must sit on the stack above it.
-      const platformOverlap = Math.min(body.bounds.max.x, BASE_X + STACK_PLATFORM_WIDTH / 2)
-        - Math.max(body.bounds.min.x, BASE_X - STACK_PLATFORM_WIDTH / 2);
-      if (
-        body.bounds.max.y >= BASE_Y - 32
-        && body.bounds.min.y <= BASE_Y + 16
-        && platformOverlap >= Math.max(14, Math.min(body.bounds.max.x - body.bounds.min.x, STACK_PLATFORM_WIDTH) * 0.3)
-      ) depth.set(body, 1);
-    });
+    const firstBody = this.dynamicBodies.find((body) => !this.isFallen(body));
+    if (
+      firstBody
+      && firstBody.bounds.max.y >= BASE_Y - 7
+      && firstBody.bounds.min.y <= BASE_Y + 18
+    ) depth.set(firstBody, 1);
 
     let changed = true;
     while (changed) {
@@ -810,9 +797,12 @@ class TowerPhysicsGame {
     const narrowest = Math.min(body.bounds.max.x - body.bounds.min.x, support.bounds.max.x - support.bounds.min.x);
     const verticalGap = support.bounds.min.y - body.bounds.max.y;
     return body.position.y < support.position.y - 2
-      && overlap >= Math.max(10, narrowest * 0.2)
-      && verticalGap >= -8
-      && verticalGap <= 9;
+      && overlap >= Math.max(10, narrowest * 0.25)
+      // The small tolerance is intentionally tighter than Matter's default
+      // resting slop: a stack now reads as physically touching instead of
+      // showing a visible gap between two connected props.
+      && verticalGap >= -3
+      && verticalGap <= 6;
   }
 
   private hasValidStackPosition(item: ItemDefinition | undefined, x: number, y: number, excluded?: TaggedBody) {
@@ -822,16 +812,17 @@ class TowerPhysicsGame {
     const candidates = this.dynamicBodies.filter((body) => body !== excluded && !this.isFallen(body));
     const proposedBottom = y + item.height / 2;
     if (candidates.length === 0) {
-      const platformOverlap = Math.min(right, BASE_X + STACK_PLATFORM_WIDTH / 2) - Math.max(left, BASE_X - STACK_PLATFORM_WIDTH / 2);
-      return platformOverlap >= Math.max(16, Math.min(item.width, STACK_PLATFORM_WIDTH) * 0.38)
-        && proposedBottom <= BASE_Y - 14;
+      // The first item is the only exception: it may be placed anywhere on the
+      // ground. Once it exists, every other item must be supported by the stack.
+      if (!excluded) return true;
+      return proposedBottom >= BASE_Y - 8 && proposedBottom <= BASE_Y + 10;
     }
     return candidates.some((support) => {
       const overlap = Math.min(right, support.bounds.max.x) - Math.max(left, support.bounds.min.x);
       const narrowest = Math.min(item.width, support.bounds.max.x - support.bounds.min.x);
       // The release may be slightly above its support so it can visibly fall,
       // but never beside it or from below it.
-      return proposedBottom <= support.bounds.min.y + 8
+      return proposedBottom <= support.bounds.min.y + 2
         && overlap >= Math.max(14, narrowest * 0.34);
     });
   }
@@ -983,7 +974,6 @@ class TowerPhysicsGame {
       ctx.drawImage(this.artwork.debris, 0, BASE_Y - 170, WORLD_WIDTH, BACKDROP_BOTTOM - (BASE_Y - 170));
       ctx.restore();
     }
-    this.drawStackPlatform();
     this.drawGoalRig(this.activationProgress());
     this.drawGrowth(illuminate, this.elapsed);
 
@@ -1035,50 +1025,6 @@ class TowerPhysicsGame {
     ctx.restore();
   }
 
-  private drawStackPlatform() {
-    const ctx = this.context;
-    const width = STACK_PLATFORM_WIDTH;
-    const height = 24;
-    const x = BASE_X - width / 2;
-    const y = BASE_Y - 24;
-    ctx.save();
-
-    // A single weathered steel plate sits flush with the ruined floor; its
-    // outline exactly mirrors the static Matter collision platform.
-    ctx.fillStyle = "rgba(10, 15, 16, 0.52)";
-    ctx.beginPath();
-    ctx.ellipse(BASE_X, BASE_Y - 2, 138, 15, 0, 0, Math.PI * 2);
-    ctx.fill();
-    roundedRect(ctx, x, y, width, height, 5);
-    const plate = ctx.createLinearGradient(x, y, x, y + height);
-    plate.addColorStop(0, "#4d5450");
-    plate.addColorStop(0.22, "#353e3c");
-    plate.addColorStop(1, "#1a2424");
-    ctx.fillStyle = plate;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(11, 18, 19, 0.96)";
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    ctx.fillStyle = "rgba(180, 173, 143, 0.18)";
-    ctx.fillRect(x + 10, y + 5, width - 20, 2);
-    ctx.strokeStyle = "rgba(90, 65, 45, 0.42)";
-    ctx.lineWidth = 1.2;
-    for (let scratch = 0; scratch < 7; scratch += 1) {
-      const scratchX = x + 26 + scratch * 28;
-      ctx.beginPath();
-      ctx.moveTo(scratchX, y + 13);
-      ctx.lineTo(scratchX + 9, y + 17);
-      ctx.stroke();
-    }
-    ctx.fillStyle = "rgba(141, 145, 127, 0.6)";
-    for (const boltX of [x + 12, x + width - 12, BASE_X - 42, BASE_X + 42]) {
-      ctx.beginPath();
-      ctx.arc(boltX, y + 15, 2.1, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-
   private drawGoalRig(collectProgress: number) {
     const ctx = this.context;
     const basketX = GOAL_BASKET_X;
@@ -1124,6 +1070,28 @@ class TowerPhysicsGame {
       ctx.arc(basketX + 2, basketY - 60, 4, 0, Math.PI * 2);
       ctx.fill();
     }
+    // A long, slightly swaying rescue rope gives the suspended basket a clear
+    // vertical connection that remains visible in the same phone viewport.
+    const ropeStartY = basketY + 47;
+    const ropeEndY = basketY + 325;
+    const ropeSway = Math.sin(this.elapsed / 760) * 4;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(29, 28, 23, 0.92)";
+    ctx.lineWidth = 4.5;
+    ctx.beginPath();
+    ctx.moveTo(basketX + 10, ropeStartY);
+    ctx.bezierCurveTo(basketX + 8 + ropeSway, basketY + 136, basketX - 4 - ropeSway, basketY + 230, basketX + ropeSway, ropeEndY);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(169, 143, 94, 0.74)";
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(basketX + 10, ropeStartY);
+    ctx.bezierCurveTo(basketX + 8 + ropeSway, basketY + 136, basketX - 4 - ropeSway, basketY + 230, basketX + ropeSway, ropeEndY);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(74, 62, 40, 0.96)";
+    ctx.beginPath();
+    ctx.arc(basketX + ropeSway, ropeEndY + 3, 4.5, 0, Math.PI * 2);
+    ctx.fill();
     if (collectProgress > 0.48) {
       const glow = ctx.createRadialGradient(basketX, basketY - 51, 1, basketX, basketY - 51, 24);
       glow.addColorStop(0, `rgba(211, 243, 150, ${Math.min(0.35, (collectProgress - 0.48) * 1.1)})`);
@@ -1161,24 +1129,29 @@ class TowerPhysicsGame {
     const approach = clamp((progress - 0.56) / 0.16, 0, 1);
     const grasp = clamp((progress - 0.73) / 0.18, 0, 1);
     const easeClimb = 1 - (1 - climb) * (1 - climb);
-    const robotWidth = 98;
-    const robotHeight = 147;
+    // Keep the helper deliberately small against a 99 m tower. Its scale is
+    // half the previous presentation so the completed stack remains the hero.
+    const robotWidth = 49;
+    const robotHeight = 74;
     const startX = BASE_X - 10;
-    const targetX = basketX - 64;
-    const robotX = startX + (targetX - startX) * approach;
-    const robotY = (BASE_Y - robotHeight + 2) + ((basketY - 86) - (BASE_Y - robotHeight + 2)) * easeClimb;
-    const stepBounce = Math.sin(this.elapsed / 96) * (2.2 + (1 - climb) * 1.5);
+    const targetX = basketX - 25;
+    const smoothApproach = approach * approach * (3 - 2 * approach);
+    const stepPhase = this.elapsed / 86;
+    const robotX = startX + (targetX - startX) * smoothApproach + Math.sin(stepPhase) * 1.3 * (1 - approach);
+    const robotY = (BASE_Y - robotHeight + 2) + ((basketY - 69) - (BASE_Y - robotHeight + 2)) * easeClimb;
+    const stepBounce = Math.sin(stepPhase * 2) * 1.35 * (1 - approach * 0.45);
 
     ctx.save();
     ctx.globalAlpha = Math.min(1, climb * 3.2);
     ctx.translate(robotX, robotY + stepBounce);
-    ctx.rotate(-0.045 + Math.sin(this.elapsed / 130) * 0.022);
+    ctx.rotate(-0.025 + Math.sin(stepPhase) * 0.028);
+    ctx.scale(1 + Math.sin(stepPhase * 2) * 0.012, 1 - Math.sin(stepPhase * 2) * 0.012);
     ctx.drawImage(this.artwork.robot, -robotWidth / 2, 0, robotWidth, robotHeight);
     ctx.restore();
 
     if (grasp <= 0) return;
-    const flowerX = basketX + (robotX + 43 - basketX) * grasp;
-    const flowerY = basketY - 52 + (robotY + 34 - (basketY - 52)) * grasp;
+    const flowerX = basketX + (robotX + 22 - basketX) * grasp;
+    const flowerY = basketY - 52 + (robotY + 17 - (basketY - 52)) * grasp;
     this.drawCollectedSprout(flowerX, flowerY, 0.9 + grasp * 0.18);
   }
 
@@ -1302,28 +1275,40 @@ class TowerPhysicsGame {
 
   private drawItemArtwork(item: ItemDefinition, opacity = 1) {
     const sprite = ITEM_ART[item.id];
-    const image = sprite.asset === "junk-sprite-atlas.png" ? this.artwork.junk : this.artwork.risky;
+    const image = sprite.asset === "junk-sprite-atlas.png"
+      ? this.artwork.junk
+      : sprite.asset === "risky-props.png"
+        ? this.artwork.risky
+        : this.artwork.monitor;
     if (!this.imageReady(image)) return false;
     const sourceWidth = image.naturalWidth / sprite.columns;
     const sourceHeight = image.naturalHeight / sprite.rows;
-    // Atlas cells are square. Drawing each cell at a uniform scale keeps the
-    // front-view props from being stretched or flattened by a rectangular body.
-    const visualSize = Math.max(item.width, item.height) * (item.shape === "circle" ? 1.1 : 1.06);
+    // Crop away the atlas-cell safety margin rather than scaling it into the
+    // world. This keeps the visible edge clean and makes the art footprint
+    // agree with the physics body used for real-world relative proportions.
+    const crop = 0.04;
+    const visualSize = Math.max(item.width, item.height) * (item.shape === "circle" ? 1.02 : 1);
     const ctx = this.context;
     const previousAlpha = ctx.globalAlpha;
+    const previousFilter = ctx.filter;
     ctx.globalAlpha = previousAlpha * opacity;
+    // One material pass unifies the art set: every recovered object carries
+    // soot, low saturation and a little oxidised age, even when the source
+    // cutout is relatively clean.
+    ctx.filter = "saturate(0.58) brightness(0.76) contrast(1.14) sepia(0.13)";
     ctx.drawImage(
       image,
-      sprite.column * sourceWidth,
-      sprite.row * sourceHeight,
-      sourceWidth,
-      sourceHeight,
+      sprite.column * sourceWidth + sourceWidth * crop,
+      sprite.row * sourceHeight + sourceHeight * crop,
+      sourceWidth * (1 - crop * 2),
+      sourceHeight * (1 - crop * 2),
       -visualSize / 2,
       -visualSize / 2,
       visualSize,
       visualSize,
     );
     ctx.globalAlpha = previousAlpha;
+    ctx.filter = previousFilter;
     return true;
   }
 
@@ -1396,13 +1381,24 @@ function colorMix(from: [number, number, number], to: [number, number, number], 
 
 function materialThumbnailStyle(itemId: ItemId): CSSProperties {
   const sprite = ITEM_ICON_ART[itemId];
+  if (itemId === "computer") {
+    return {
+      backgroundImage: "url(/assets/worn-monitor.png)",
+      backgroundPosition: "center",
+      backgroundRepeat: "no-repeat",
+      backgroundSize: "92% auto",
+      filter: "saturate(.58) brightness(.76) contrast(1.14) sepia(.13)",
+    };
+  }
   const x = sprite.columns === 1 ? 0 : (sprite.column / (sprite.columns - 1)) * 100;
   const y = sprite.rows === 1 ? 0 : (sprite.row / (sprite.rows - 1)) * 100;
+  const asset = sprite.asset === "front-prop-atlas.png" ? "front-prop-atlas-v2.png" : "front-risky-props-v2.png";
   return {
-    backgroundImage: `url(/assets/${sprite.asset})`,
+    backgroundImage: `url(/assets/${asset})`,
     backgroundPosition: `${x}% ${y}%`,
     backgroundRepeat: "no-repeat",
     backgroundSize: `${sprite.columns * 100}% ${sprite.rows * 100}%`,
+    filter: "saturate(.58) brightness(.76) contrast(1.14) sepia(.13)",
   };
 }
 

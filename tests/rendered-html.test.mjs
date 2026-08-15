@@ -23,6 +23,6 @@ test("server-renders the Ashes to Aurora game shell", async () => {
   assert.match(html, /余烬之光/);
   assert.match(html, /aria-label="第 1 关：新芽吊篮"/);
   assert.match(html, /垃圾物品/);
-  assert.match(html, /front-prop-atlas\.png/);
+  assert.match(html, /front-prop-atlas-v2\.png/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site|codex-preview/);
 });
