@@ -354,7 +354,10 @@ class TowerPhysicsGame {
   private viewportWorldLeft = 0;
   private panning: { pointerId: number; lastClientY: number } | null = null;
   private baseBody: Matter.Body | null = null;
-  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris" | "goal" | "monitor", HTMLImageElement>;
+  private readonly artwork: Record<
+    "polluted" | "pollutedWide" | "revived" | "revivedWide" | "junk" | "risky" | "debris" | "goal" | "monitor",
+    HTMLImageElement
+  >;
 
   constructor(canvas: HTMLCanvasElement, level: LevelConfig, onUpdate: (snapshot: GameSnapshot) => void, onClear: () => void) {
     const context = canvas.getContext("2d");
@@ -367,8 +370,14 @@ class TowerPhysicsGame {
     this.inventory = inventoryFor(level);
     this.engine = this.createEngine();
     this.artwork = {
-      polluted: this.loadArtwork("/assets/wasteland-master-polluted-urban-hd-v5.png"),
-      revived: this.loadArtwork("/assets/wasteland-master-revived-urban-hd-v5.png"),
+      // The user's original portrait paintings remain the canonical phone
+      // backgrounds. The wide companions only extend those same paintings at
+      // the sides, so desktop gains scenery without stretching or replacing
+      // the mobile composition.
+      polluted: this.loadArtwork("/assets/wasteland-flat-polluted.png"),
+      pollutedWide: this.loadArtwork("/assets/wasteland-expanded-polluted-v6.png"),
+      revived: this.loadArtwork("/assets/wasteland-flat-revived.png"),
+      revivedWide: this.loadArtwork("/assets/wasteland-expanded-revived-v6.png"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
       junk: this.loadArtwork("/assets/front-prop-atlas-v2.png"),
@@ -999,7 +1008,7 @@ class TowerPhysicsGame {
     ctx.fillRect(this.viewportWorldLeft, backdropTop, this.viewportWorldWidth, backdropHeight);
     if (this.imageReady(polluted)) {
       ctx.globalAlpha = 0.96;
-      this.drawLongBackdrop(polluted);
+      this.drawLongBackdrop(polluted, this.artwork.pollutedWide);
       ctx.globalAlpha = 1;
     } else {
       this.drawFallbackSky(illuminate);
@@ -1007,7 +1016,7 @@ class TowerPhysicsGame {
     if (illuminate > 0 && this.imageReady(revived)) {
       ctx.save();
       ctx.globalAlpha = illuminate;
-      this.drawLongBackdrop(revived);
+      this.drawLongBackdrop(revived, this.artwork.revivedWide);
       ctx.restore();
     }
 
@@ -1126,12 +1135,15 @@ class TowerPhysicsGame {
     ctx.restore();
   }
 
-  private drawLongBackdrop(image: HTMLImageElement) {
+  private drawLongBackdrop(portraitImage: HTMLImageElement, wideImage: HTMLImageElement) {
     const ctx = this.context;
     const areaWidth = this.viewportWorldWidth;
     const areaHeight = BACKDROP_BOTTOM - BACKDROP_TOP;
-    // Square HD masters keep a portrait-safe center for phones and reveal the
-    // newly painted side scenery on wide screens. `cover` crops—never stretches.
+    // Keep the exact original painting on phone-sized viewports. Only desktop
+    // selects the outpainted companion, whose centre and metre scale match the
+    // portrait master. Both paths use cover cropping and never deform pixels.
+    const useWideArtwork = areaWidth > WORLD_WIDTH * 1.08 && this.imageReady(wideImage);
+    const image = useWideArtwork ? wideImage : portraitImage;
     const sourceAspect = image.naturalWidth / image.naturalHeight;
     const areaAspect = areaWidth / areaHeight;
     let renderedWidth = areaWidth;
