@@ -28,6 +28,7 @@ const GOAL_BASKET_X = BASE_X + 14;
 const GOAL_REACH_HEIGHT = 99;
 const GOAL_REACH_Y = BASE_Y - GOAL_REACH_HEIGHT * PIXELS_PER_METER;
 const GOAL_BASKET_Y = GOAL_REACH_Y - 86;
+const GOAL_RIG_TOP_Y = GOAL_BASKET_Y - 180;
 const GOAL_REACH_HALF_WIDTH = 139;
 // The climb now takes roughly twice as long as the previous 5.5 second pass;
 // the picking beat remains compact once the robot reaches the basket.
@@ -43,7 +44,9 @@ const BACKDROP_TOP = 600;
 const BACKDROP_BOTTOM = BASE_Y + 149;
 const VIEW_GROUND_CAMERA = WORLD_HEIGHT - BASE_Y - 84;
 const MIN_CAMERA_OFFSET = VIEW_GROUND_CAMERA - 20;
-const MAX_CAMERA_OFFSET = 154 - (BASE_Y - 99 * PIXELS_PER_METER);
+// At maximum ascent the crane arm, basket, flower and tower crown all remain
+// inside the portrait viewport instead of being clipped above its top edge.
+const MAX_CAMERA_OFFSET = 100 - GOAL_RIG_TOP_Y;
 
 type Shape = "box" | "circle";
 type ItemRole = "foundation" | "bridge" | "block" | "tall" | "risky";
@@ -326,8 +329,8 @@ const ITEM_PHYSICS: Record<ItemId, MaterialPhysics> = {
 };
 
 const ROBOT_PHYSICS: MaterialPhysics = {
-  massKg: 95,
-  safeLoadKg: 450,
+  massKg: 47.5,
+  safeLoadKg: 225,
   stability: 0.86,
   flexibility: 0.28,
   failureLabel: "机械关节过载",
@@ -346,7 +349,7 @@ const LEVELS: LevelConfig[] = [
     subtitle: "把稳定的废料塔堆到吊篮下沿，攀爬助手便会出发摘取新芽。",
     baseWidth: 242,
     wind: 0,
-    inventory: ["slab", "slab", "slab", "pallet", "pallet", "container", "container", "container", "container", "container", "container", "car", "car", "scaffold", "scaffold", "scaffold", "scaffold", "scaffold", "scaffold", "fridge", "fridge", "fridge", "cabinet", "cabinet", "washer", "washer", "crate", "crate", "crate", "crate", "beam", "beam", "beam", "beam", "ladder", "pipes"],
+    inventory: ["slab", "slab", "slab", "pallet", "pallet", "container", "container", "container", "container", "container", "container", "car", "car", "scaffold", "scaffold", "scaffold", "scaffold", "scaffold", "scaffold", "fridge", "fridge", "fridge", "cabinet", "cabinet", "washer", "washer", "crate", "crate", "crate", "crate", "beam", "beam", "beam", "beam", "ladder", "pipes", "computer", "computer", "computer", "bicycle", "bicycle", "chair", "chair"],
     hintItems: ["slab", "scaffold", "beam"],
   },
 ];
@@ -411,6 +414,7 @@ class TowerPhysicsGame {
   private frameId = 0;
   private cameraOffsetY = VIEW_GROUND_CAMERA;
   private cameraManualOffsetY = 0;
+  private cameraAutoFollowPeakHeight = 0;
   private viewportWorldWidth = WORLD_WIDTH;
   private viewportWorldLeft = 0;
   private panning: { pointerId: number; lastClientY: number } | null = null;
@@ -600,6 +604,7 @@ class TowerPhysicsGame {
     this.activeHint = null;
     this.cameraOffsetY = VIEW_GROUND_CAMERA;
     this.cameraManualOffsetY = 0;
+    this.cameraAutoFollowPeakHeight = 0;
     this.panning = null;
     this.message = "已重置本关。物料和 3 次提示已恢复。";
     Composite.clear(this.engine.world, false, true);
@@ -867,6 +872,12 @@ class TowerPhysicsGame {
 
     const currentHeight = this.measureHeight(supportGraph.bodies);
     this.height = currentHeight;
+    if (this.status === "building" && currentHeight > this.cameraAutoFollowPeakHeight + 0.35) {
+      // A downward manual inspection must not hide newly added material. Once
+      // the tower grows, the automatic camera regains priority and follows it.
+      this.cameraManualOffsetY = Math.max(0, this.cameraManualOffsetY);
+      this.cameraAutoFollowPeakHeight = currentHeight;
+    }
     const settledBodies = this.dynamicBodies.filter((body) => !this.isFallen(body));
     const stable = !this.adjusting && towerBodies.length > 0 && settledBodies.every((body) => body.speed < 0.25 && Math.abs(body.angularVelocity) < 0.025);
     if (stable) {
@@ -948,7 +959,7 @@ class TowerPhysicsGame {
       carriedKg.set(body, item ? ITEM_PHYSICS[item.id].massKg : 0);
     });
 
-    // The robot is a moving payload. Its 95 kg is added to the exact piece
+    // The robot is a moving payload. Its calibrated mass is added to the exact piece
     // currently carrying its feet/hands, then propagated through every lower
     // support just like the mass of the junk above it.
     if (this.status === "activating") {
@@ -1210,9 +1221,18 @@ class TowerPhysicsGame {
       }
       return VIEW_GROUND_CAMERA;
     }
-    // Follow a growing tower, but preserve the player's manual pan to inspect
-    // any section of the complete 0–99 m ruler.
-    return clamp(VIEW_GROUND_CAMERA + clamp(this.height, 0, 99) * 2.82, MIN_CAMERA_OFFSET, MAX_CAMERA_OFFSET);
+    // Keep the physical crown comfortably below the top edge. During the last
+    // seven metres, reveal the complete crane rig as well so reaching 99 m
+    // never leaves the basket, flower or their support cropped off-screen.
+    const height = clamp(this.height, 0, GOAL_REACH_HEIGHT);
+    const towerTopY = BASE_Y - height * PIXELS_PER_METER;
+    const towerFollowOffset = clamp(260 - towerTopY, VIEW_GROUND_CAMERA, MAX_CAMERA_OFFSET);
+    const goalReveal = smoothStep((height - 92) / (GOAL_REACH_HEIGHT - 92));
+    return clamp(
+      towerFollowOffset + (MAX_CAMERA_OFFSET - towerFollowOffset) * goalReveal,
+      MIN_CAMERA_OFFSET,
+      MAX_CAMERA_OFFSET,
+    );
   }
 
   private imageReady(image: HTMLImageElement) {
