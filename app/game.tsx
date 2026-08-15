@@ -2670,6 +2670,11 @@ interface GameStageProps {
 }
 
 type ConfirmationAction = "reset" | "exit" | null;
+type EndingPhase = "video" | "hold" | "black" | "epilogue";
+
+const ENDING_LAST_FRAME_HOLD_MS = 500;
+const ENDING_FADE_TO_BLACK_MS = 850;
+const ENDING_BLACK_HOLD_MS = 2000;
 
 function GameStage({ level, onExit, audio }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -2680,7 +2685,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
-  const [endingComplete, setEndingComplete] = useState(false);
+  const [endingPhase, setEndingPhase] = useState<EndingPhase>("video");
   const [endingNeedsGesture, setEndingNeedsGesture] = useState(false);
   const [endingReady, setEndingReady] = useState(false);
   const [endingLeaving, setEndingLeaving] = useState(false);
@@ -2691,7 +2696,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
     audio.startGameplay();
     const game = new TowerPhysicsGame(canvas, level, setSnapshot, () => {
       audio.stopGameplay(1100);
-      setEndingComplete(false);
+      setEndingPhase("video");
       setEndingNeedsGesture(false);
       setEndingReady(false);
       setEndingLeaving(false);
@@ -2734,6 +2739,21 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
       endingMusicFadeRef.current = null;
     };
   }, [endingPlaying]);
+
+  useEffect(() => {
+    if (!endingPlaying || endingPhase !== "hold") return;
+    const timer = window.setTimeout(() => setEndingPhase("black"), ENDING_LAST_FRAME_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [endingPhase, endingPlaying]);
+
+  useEffect(() => {
+    if (!endingPlaying || endingPhase !== "black") return;
+    const timer = window.setTimeout(
+      () => setEndingPhase("epilogue"),
+      ENDING_FADE_TO_BLACK_MS + ENDING_BLACK_HOLD_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [endingPhase, endingPlaying]);
 
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
@@ -2858,7 +2878,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
             <source src="/assets/victory-ending-pingpong.wav" type="audio/wav" />
           </audio>
           {endingPlaying && (
-            <div className={`ending-cinematic ${endingReady ? "is-ready" : ""} ${endingComplete ? "is-complete" : ""}`} aria-label="通关结尾">
+            <div className={`ending-cinematic is-${endingPhase} ${endingReady ? "is-ready" : ""}`} aria-label="通关结尾">
               <video
                 ref={endingVideoRef}
                 className="ending-cinematic-video"
@@ -2867,12 +2887,12 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 playsInline
                 preload="auto"
                 onCanPlay={() => setEndingReady(true)}
-                onEnded={() => setEndingComplete(true)}
-                onError={() => setEndingComplete(true)}
+                onEnded={() => setEndingPhase("hold")}
+                onError={() => setEndingPhase("black")}
               >
                 <source src="/assets/victory-ending.mp4" type="video/mp4" />
               </video>
-              {endingNeedsGesture && !endingComplete && (
+              {endingNeedsGesture && endingPhase === "video" && (
                 <button
                   className="ending-play-button"
                   type="button"
@@ -2894,7 +2914,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                   播放结局与音乐
                 </button>
               )}
-              {endingComplete && (
+              {endingPhase === "epilogue" && (
                 <>
                   <img
                     className="ending-epilogue-background"
@@ -2921,7 +2941,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                       window.setTimeout(() => {
                         if (soundtrack) soundtrack.currentTime = 0;
                         setEndingPlaying(false);
-                        setEndingComplete(false);
+                        setEndingPhase("video");
                         setEndingLeaving(false);
                         onExit();
                       }, 720);

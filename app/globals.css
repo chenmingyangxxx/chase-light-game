@@ -584,15 +584,6 @@ body {
   object-position: center;
   background: #030708;
 }
-.ending-cinematic.is-complete::after {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  background: #020405;
-  content: "";
-  pointer-events: none;
-  animation: ending-black-bridge 2.7s cubic-bezier(.4, 0, .2, 1) both;
-}
 .ending-epilogue-background {
   position: absolute;
   z-index: 1;
@@ -604,7 +595,7 @@ body {
   opacity: 0;
   filter: brightness(.76) saturate(.9);
   transform: scale(1.018);
-  animation: ending-epilogue-in 2s 900ms cubic-bezier(.22, .7, .2, 1) forwards;
+  animation: ending-epilogue-in 2s cubic-bezier(.22, .7, .2, 1) forwards;
 }
 .ending-wordmark {
   position: absolute;
@@ -615,7 +606,7 @@ body {
   opacity: 0;
   filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.5));
   transform: translate(-50%, -46%) scale(0.985);
-  animation: ending-wordmark-in 1.8s 3.15s cubic-bezier(.22, .7, .2, 1) forwards;
+  animation: ending-wordmark-in 1.8s 1.25s cubic-bezier(.22, .7, .2, 1) forwards;
 }
 .ending-wordmark img {
   display: block;
@@ -654,17 +645,11 @@ body {
   letter-spacing: .12em;
   backdrop-filter: blur(8px);
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
-  animation: ending-control-in 700ms 3.65s ease forwards;
+  animation: ending-control-in 700ms 1.85s ease forwards;
 }
 .ending-home-button:hover { border-color: rgba(231, 244, 209, 0.62); background: rgba(28, 55, 48, 0.9); transform: translateY(-2px); }
 .ending-home-button:active { transform: translateY(0); }
 
-@keyframes ending-black-bridge {
-  0% { opacity: 0; }
-  32% { opacity: 1; }
-  46% { opacity: 1; }
-  100% { opacity: 0; }
-}
 @keyframes ending-epilogue-in {
   from { opacity: 0; transform: scale(1.018); }
   to { opacity: 1; transform: scale(1); }
@@ -692,8 +677,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .ending-wordmark,
   .ending-home-button,
-  .ending-epilogue-background,
-  .ending-cinematic.is-complete::after { animation-duration: 1ms; animation-delay: 0ms; }
+  .ending-epilogue-background { animation-duration: 1ms; animation-delay: 0ms; }
 }
 
 @media (max-width: 860px) {
@@ -1244,8 +1228,10 @@ body {
 }
 .ending-cinematic.is-ready { background: #030708; }
 .ending-cinematic.is-ready::before { opacity: 0; }
-.ending-cinematic.is-ready .ending-cinematic-video { opacity: 1; }
-.ending-cinematic.is-ready.is-complete .ending-cinematic-video {
+.ending-cinematic.is-ready.is-video .ending-cinematic-video,
+.ending-cinematic.is-ready.is-hold .ending-cinematic-video { opacity: 1; }
+.ending-cinematic.is-ready.is-black .ending-cinematic-video,
+.ending-cinematic.is-ready.is-epilogue .ending-cinematic-video {
   opacity: 0;
   transition-duration: 850ms;
 }
