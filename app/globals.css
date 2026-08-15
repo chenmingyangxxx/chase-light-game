@@ -1014,7 +1014,7 @@ body {
   height: 40px;
   font-size: clamp(13px, .82vw, 14px);
 }
-.minimal-game .inventory-panel { top: 53px; bottom: 97px; }
+.minimal-game .inventory-panel { top: 7px; bottom: 97px; }
 .minimal-game .inventory-head strong { font-size: clamp(12px, .78vw, 14px); }
 .minimal-game .inventory-head > span {
   min-width: 24px;
@@ -1051,8 +1051,6 @@ body {
 .activation-strip { font-size: 11px; }
 .activation-strip b { font-size: 11px; }
 
-.game-sound-toggle,
-.launch-sound-toggle,
 .ending-play-button {
   border: 1px solid rgba(220, 237, 208, 0.32);
   border-radius: 9px;
@@ -1065,54 +1063,10 @@ body {
   backdrop-filter: blur(10px);
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
-.game-sound-toggle:hover,
-.launch-sound-toggle:hover,
 .ending-play-button:hover {
   border-color: rgba(228, 242, 203, 0.58);
   background: rgba(31, 58, 49, 0.86);
   transform: translateY(-1px);
-}
-.game-sound-toggle {
-  position: absolute;
-  z-index: 5;
-  top: 7px;
-  right: 7px;
-  display: flex;
-  width: var(--game-rail-width);
-  min-height: 38px;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  font-size: 12px;
-  letter-spacing: .08em;
-}
-.sound-glyph {
-  width: 17px;
-  height: 17px;
-  flex: 0 0 auto;
-  overflow: visible;
-  fill: currentColor;
-}
-.sound-glyph .sound-wave {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-}
-.launch-sound-toggle {
-  position: fixed;
-  z-index: 4;
-  top: max(16px, env(safe-area-inset-top));
-  right: max(16px, env(safe-area-inset-right));
-  min-height: 38px;
-  padding: 0 14px;
-  font-size: 12px;
-  letter-spacing: .06em;
-}
-.launch-sound-toggle.is-on {
-  border-color: rgba(211, 235, 174, 0.48);
-  color: #eef6dc;
-  background: rgba(42, 69, 52, 0.74);
 }
 .ending-play-button {
   position: absolute;
@@ -1137,7 +1091,7 @@ body {
 
 @media (max-width: 600px) {
   .minimal-game { --game-rail-width: clamp(132px, 36vw, 148px); }
-  .minimal-game .inventory-panel { top: 51px; bottom: 93px; padding-inline: 5px; }
+  .minimal-game .inventory-panel { top: 7px; bottom: 93px; padding-inline: 5px; }
   .minimal-game .material-card {
     grid-template-columns: 44px minmax(0, 1fr);
     min-height: 55px;
@@ -1146,7 +1100,6 @@ body {
   .minimal-game .material-icon { width: 43px; height: 43px; }
   .minimal-game .material-copy b { font-size: clamp(10px, 2.8vw, 11.5px); }
   .stage-action { height: 38px; font-size: 13px; }
-  .game-sound-toggle { min-height: 36px; font-size: 11px; }
   .activation-strip {
     right: calc(var(--game-rail-width) + 14px);
     bottom: 8px;
@@ -1156,13 +1109,6 @@ body {
     font-size: 10px;
   }
   .activation-strip b { font-size: 10px; }
-  .launch-sound-toggle {
-    top: max(11px, env(safe-area-inset-top));
-    right: max(11px, env(safe-area-inset-right));
-    min-height: 36px;
-    padding: 0 11px;
-    font-size: 11px;
-  }
   .launch-guide-header h2 { font-size: 21px; }
   .launch-guide-scroll { font-size: 13px; }
   .launch-guide-scroll h3 { font-size: 15px; }
@@ -1194,6 +1140,66 @@ body {
 .launch-screen.is-leaving .launch-content { opacity: 0; transform: translateY(-8px) scale(.99); }
 .minimal-game.is-entering { animation: game-scene-enter 820ms cubic-bezier(.2, .7, .2, 1) both; }
 
+.scene-loading-screen {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 11px;
+  overflow: hidden;
+  color: rgba(239, 245, 232, .94);
+  background:
+    radial-gradient(circle at 50% 43%, rgba(62, 90, 72, .25), transparent 34%),
+    linear-gradient(180deg, #0b1919 0%, #061011 100%);
+  animation: scene-loader-arrive 280ms ease both;
+}
+.scene-loading-screen::before {
+  position: absolute;
+  inset: 0;
+  background-image: url('/assets/startup-wasteland-sprout.png');
+  background-position: center;
+  background-size: cover;
+  content: '';
+  opacity: .075;
+  filter: grayscale(1) contrast(1.1);
+}
+.scene-loading-visual {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  margin-bottom: 3px;
+}
+.scene-loading-ring {
+  position: absolute;
+  inset: 4px;
+  border: 1px solid rgba(230, 241, 217, .14);
+  border-top-color: rgba(224, 240, 197, .84);
+  border-right-color: rgba(224, 240, 197, .42);
+  border-radius: 50%;
+  animation: launch-spin 1.15s linear infinite;
+}
+.scene-loading-visual img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 32px;
+  height: 44px;
+  object-fit: cover;
+  object-position: center 58%;
+  opacity: .78;
+  filter: grayscale(1) brightness(1.65);
+  transform: translate(-50%, -50%);
+}
+.scene-loading-screen strong,
+.scene-loading-screen > span {
+  position: relative;
+  z-index: 1;
+}
+.scene-loading-screen strong { font-size: clamp(14px, 1vw, 16px); letter-spacing: .16em; }
+.scene-loading-screen > span { color: rgba(226, 236, 218, .6); font-size: 11px; letter-spacing: .12em; }
+
 .ending-cinematic {
   background: rgba(3, 7, 8, 0);
   transition: background-color 850ms ease;
@@ -1223,6 +1229,11 @@ body {
   to { opacity: 1; filter: brightness(1); transform: scale(1); }
 }
 
+@keyframes scene-loader-arrive {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .launch-screen::after,
   .launch-screen .launch-art,
@@ -1232,4 +1243,6 @@ body {
   .ending-cinematic::before,
   .ending-cinematic-video { transition-duration: 1ms; }
   .minimal-game.is-entering { animation-duration: 1ms; }
+  .scene-loading-screen { animation-duration: 1ms; }
+  .scene-loading-ring { animation-duration: 1.8s; }
 }
