@@ -1670,23 +1670,29 @@ export function DawnTowerGame() {
       <main className="launch-screen" aria-labelledby="launch-title">
         <div className="launch-art" aria-hidden="true" />
         <div className="launch-shade" aria-hidden="true" />
+        {!ready && (
+          <div className="launch-loader" role="status" aria-label="正在载入游戏">
+            <span className="launch-loader-ring" aria-hidden="true" />
+            <img className="launch-loader-mark" src="/assets/chase-light-sprout-hook.png" alt="" />
+          </div>
+        )}
         <section className="launch-content">
           <div className="launch-brand">
-            <img className="launch-emblem" src="/assets/ashes-to-aurora-emblem.png" alt="" />
+            <img className="launch-emblem" src="/assets/chase-light-sprout-hook.png" alt="" />
             <p className="launch-kicker">废墟之上 · 新芽未熄</p>
-            <h1 id="launch-title">余烬之光</h1>
-            <p className="launch-english">ASHES TO AURORA</p>
+            <h1 id="launch-title">追光，并生</h1>
+            <p className="launch-english">CHASE THE LIGHT · LET LIFE BEGIN</p>
             <p className="launch-tagline">堆叠废料，抵达 99 米的新生。</p>
           </div>
 
           <div className="launch-actions">
-            <div className="launch-progress-copy"><span>场景载入</span><b>{loading}%</b></div>
-            <div className="launch-progress" role="progressbar" aria-label="游戏加载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={loading}>
-              <i style={{ width: `${loading}%` }} />
-            </div>
-            <button className="launch-start" type="button" disabled={!ready} onClick={() => setStarted(true)}>
-              {ready ? "开始游戏" : "正在载入"}
-            </button>
+            {ready && (
+              <button className="launch-start" type="button" onClick={() => setStarted(true)}>
+                <span className="launch-start-mark" aria-hidden="true">✦</span>
+                开始游戏
+                <span className="launch-start-mark" aria-hidden="true">✦</span>
+              </button>
+            )}
           </div>
         </section>
       </main>
