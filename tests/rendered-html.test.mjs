@@ -22,7 +22,7 @@ test("server-renders the Chase Light launch screen", async () => {
   assert.match(html, /<title>追\.光｜物理堆叠小游戏<\/title>/);
   assert.match(html, /aria-label="追\.光"/);
   assert.match(html, /class="launch-screen"/);
-  assert.match(html, /pursue-light-hook-logo-thin-cable\.png/);
+  assert.match(html, /pursue-light-hook-logo-thin-clean\.png/);
   assert.match(html, /chase-light-brush-wordmark\.png/);
   assert.match(html, /光之故事 · 99米新生/);
   assert.match(html, /aria-label="正在载入游戏 8%"/);

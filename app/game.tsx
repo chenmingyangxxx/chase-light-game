@@ -1678,7 +1678,7 @@ export function DawnTowerGame() {
         )}
         <section className="launch-content">
           <div className="launch-brand">
-            <img className="launch-emblem" src="/assets/pursue-light-hook-logo-thin-cable.png" alt="" />
+            <img className="launch-emblem" src="/assets/pursue-light-hook-logo-thin-clean.png" alt="" />
             <h1 id="launch-title" className="launch-wordmark" aria-label="追.光">
               <img src="/assets/chase-light-brush-wordmark.png" alt="" />
               <i aria-hidden="true">.</i>
