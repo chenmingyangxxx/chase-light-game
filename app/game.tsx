@@ -34,9 +34,10 @@ const GOAL_REACH_HALF_WIDTH = 139;
 const ROBOT_CLIMB_DURATION = 11000;
 const ROBOT_PLUCK_DURATION = 2200;
 const ACTIVATION_DURATION = ROBOT_CLIMB_DURATION + ROBOT_PLUCK_DURATION;
-const ROBOT_MASS = 34;
 const ROBOT_CLIMB_HEIGHT = 86;
 const ROBOT_PLUCK_HEIGHT = 91;
+const PHYSICS_MASS_PER_KG = 0.045;
+const STRENGTH_MULTIPLIER = 3;
 const RECOVERY_Y = BASE_Y + 113;
 const BACKDROP_TOP = 600;
 const BACKDROP_BOTTOM = BASE_Y + 149;
@@ -108,6 +109,14 @@ interface ItemDefinition {
   trait: string;
 }
 
+interface MaterialPhysics {
+  massKg: number;
+  safeLoadKg: number;
+  stability: number;
+  flexibility: number;
+  failureLabel: string;
+}
+
 interface HintSpec {
   itemId: ItemId;
   xMeters: number;
@@ -145,6 +154,12 @@ interface AdjustedBody {
 interface TaggedBody extends Matter.Body {
   gameItem?: ItemDefinition;
   gameBornAt?: number;
+  gameBaseInertia?: number;
+  gameStressRatio?: number;
+  gameStressDamage?: number;
+  gameDeformation?: number;
+  gameBendDirection?: number;
+  gameFracturedAt?: number;
 }
 
 interface ClimbPoint {
@@ -284,6 +299,38 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
     id: "chair", name: "办公椅", shortName: "椅", role: "risky", shape: "box", width: 82, height: 126,
     density: 0.0016, friction: 0.4, frictionStatic: 0.52, restitution: 0.05, color: "#745f56", accent: "#c5a477", trait: "偏心 · 易倒",
   },
+};
+
+// Representative real-world masses and working loads. Gameplay multiplies
+// each working load by three so discarded objects remain useful at 99 m while
+// preserving their relative strengths, weight classes and failure character.
+const ITEM_PHYSICS: Record<ItemId, MaterialPhysics> = {
+  pallet: { massKg: 25, safeLoadKg: 1500, stability: 1.18, flexibility: 0.58, failureLabel: "木板持续弯曲并劈裂" },
+  slab: { massKg: 680, safeLoadKg: 8000, stability: 1.34, flexibility: 0.08, failureLabel: "混凝土开裂并突然断裂" },
+  container: { massKg: 2180, safeLoadKg: 28280, stability: 1.16, flexibility: 0.3, failureLabel: "箱体钢板屈曲并塌陷" },
+  car: { massKg: 1250, safeLoadKg: 1500, stability: 1.02, flexibility: 0.38, failureLabel: "车顶与立柱弯折失效" },
+  cabinet: { massKg: 75, safeLoadKg: 350, stability: 0.68, flexibility: 0.54, failureLabel: "薄钢板发生侧向屈曲" },
+  sofa: { massKg: 65, safeLoadKg: 450, stability: 1.12, flexibility: 0.88, failureLabel: "框架受压变形并侧翻" },
+  beam: { massKg: 520, safeLoadKg: 6000, stability: 1.22, flexibility: 0.24, failureLabel: "钢梁产生永久弯曲" },
+  ladder: { massKg: 18, safeLoadKg: 136, stability: 0.46, flexibility: 0.62, failureLabel: "梯框弯折并失去支撑" },
+  pipes: { massKg: 260, safeLoadKg: 3500, stability: 0.58, flexibility: 0.42, failureLabel: "管束弯曲后滚离受力点" },
+  crate: { massKg: 18, safeLoadKg: 250, stability: 0.92, flexibility: 0.68, failureLabel: "箱壁受压弯折并破裂" },
+  fridge: { massKg: 85, safeLoadKg: 350, stability: 0.76, flexibility: 0.34, failureLabel: "冰箱外壳屈曲变形" },
+  washer: { massKg: 72, safeLoadKg: 400, stability: 0.9, flexibility: 0.26, failureLabel: "机壳受压凹陷并倾倒" },
+  computer: { massKg: 12, safeLoadKg: 60, stability: 0.62, flexibility: 0.18, failureLabel: "显示器外壳碎裂失效" },
+  scaffold: { massKg: 95, safeLoadKg: 900, stability: 0.72, flexibility: 0.48, failureLabel: "脚手架杆件弯折失稳" },
+  barrel: { massKg: 22, safeLoadKg: 300, stability: 0.5, flexibility: 0.58, failureLabel: "桶壁压瘪并向侧面滚动" },
+  tire: { massKg: 11, safeLoadKg: 750, stability: 0.3, flexibility: 0.96, failureLabel: "轮胎被压扁后弹出支撑面" },
+  bicycle: { massKg: 16, safeLoadKg: 90, stability: 0.24, flexibility: 0.76, failureLabel: "车架弯折并侧向滑落" },
+  chair: { massKg: 15, safeLoadKg: 160, stability: 0.36, flexibility: 0.74, failureLabel: "椅架弯折并侧翻" },
+};
+
+const ROBOT_PHYSICS: MaterialPhysics = {
+  massKg: 95,
+  safeLoadKg: 450,
+  stability: 0.86,
+  flexibility: 0.28,
+  failureLabel: "机械关节过载",
 };
 
 // Final world-space sizes use one calibrated presentation scale. Ratios follow
@@ -719,6 +766,7 @@ class TowerPhysicsGame {
   }
 
   private makeBody(item: ItemDefinition, x: number, y: number, angle: number): TaggedBody {
+    const physics = ITEM_PHYSICS[item.id];
     const options: Matter.IChamferableBodyDefinition = {
       density: item.density,
       friction: item.friction,
@@ -736,12 +784,20 @@ class TowerPhysicsGame {
       ? Bodies.circle(x, y, item.width / 2, options)
       : Bodies.rectangle(x, y, item.width, item.height, options)) as TaggedBody;
     Body.setAngle(body, angle);
+    // Convert kilograms to one consistent Matter mass scale. This preserves
+    // the large real-world differences between a pallet, appliance, car and
+    // shipping container instead of deriving weight only from sprite area.
+    Body.setMass(body, physics.massKg * PHYSICS_MASS_PER_KG);
     // Keep the visual centre and collision centre identical. Shifting Matter's
     // centre without compensating the sprite made physically touching pieces
     // look suspended or overlapping, especially tall appliances.
-    if (item.role === "tall" || item.role === "risky") Body.setInertia(body, body.inertia * 0.8);
+    Body.setInertia(body, body.inertia * physics.stability);
     body.gameItem = item;
     body.gameBornAt = this.elapsed;
+    body.gameBaseInertia = body.inertia;
+    body.gameStressRatio = 0;
+    body.gameStressDamage = 0;
+    body.gameDeformation = 0;
     return body;
   }
 
@@ -797,6 +853,8 @@ class TowerPhysicsGame {
     }
     const supportGraph = this.supportGraph();
     const towerBodies = supportGraph.bodies;
+    this.updateStructuralStress(supportGraph, delta);
+    if (this.status === "failed") return;
     if (this.level.wind > 0 && towerBodies.length > 0) {
       const phase = Math.sin(this.elapsed / 850) + Math.sin(this.elapsed / 1600) * 0.55;
       towerBodies.forEach((body) => {
@@ -875,6 +933,107 @@ class TowerPhysicsGame {
       });
     }
     return { bodies: [...depth.keys()], depth };
+  }
+
+  private updateStructuralStress(
+    graph: { bodies: TaggedBody[]; depth: Map<TaggedBody, number> },
+    delta: number,
+  ) {
+    const { bodies, depth } = graph;
+    if (!bodies.length) return;
+    const carriedKg = new Map<TaggedBody, number>();
+    const loadAboveKg = new Map<TaggedBody, number>();
+    bodies.forEach((body) => {
+      const item = body.gameItem;
+      carriedKg.set(body, item ? ITEM_PHYSICS[item.id].massKg : 0);
+    });
+
+    // The robot is a moving payload. Its 95 kg is added to the exact piece
+    // currently carrying its feet/hands, then propagated through every lower
+    // support just like the mass of the junk above it.
+    if (this.status === "activating") {
+      const route = this.climbRoute();
+      if (route.length >= 2) {
+        const support = this.robotClimbPose(route).anchor.support;
+        carriedKg.set(support, (carriedKg.get(support) ?? 0) + ROBOT_PHYSICS.massKg);
+      }
+    }
+
+    [...bodies]
+      .sort((a, b) => (depth.get(b) ?? 0) - (depth.get(a) ?? 0))
+      .forEach((body) => {
+        const item = body.gameItem;
+        if (!item) return;
+        const ownKg = ITEM_PHYSICS[item.id].massKg;
+        const totalKg = Math.max(ownKg, carriedKg.get(body) ?? ownKg);
+        loadAboveKg.set(body, Math.max(0, totalKg - ownKg));
+        const bodyDepth = depth.get(body) ?? 0;
+        if (bodyDepth <= 1) return;
+        const supports = bodies.filter((support) =>
+          (depth.get(support) ?? 0) === bodyDepth - 1 && this.isRestingOn(body, support));
+        if (!supports.length) return;
+        const overlaps = supports.map((support) => Math.max(1,
+          Math.min(body.bounds.max.x, support.bounds.max.x) - Math.max(body.bounds.min.x, support.bounds.min.x)));
+        const totalOverlap = overlaps.reduce((sum, overlap) => sum + overlap, 0);
+        supports.forEach((support, index) => {
+          const share = overlaps[index] / Math.max(1, totalOverlap);
+          carriedKg.set(support, (carriedKg.get(support) ?? 0) + totalKg * share);
+        });
+      });
+
+    bodies.forEach((body) => {
+      const item = body.gameItem;
+      if (!item) return;
+      const physics = ITEM_PHYSICS[item.id];
+      const strengthenedCapacityKg = physics.safeLoadKg * STRENGTH_MULTIPLIER;
+      const loadKg = loadAboveKg.get(body) ?? 0;
+      const stressRatio = loadKg / Math.max(1, strengthenedCapacityKg);
+      const overload = Math.max(0, stressRatio - 1);
+      let damage = body.gameStressDamage ?? 0;
+      if (overload > 0) {
+        damage += delta * (0.0002 + overload * 0.00055) * (1.08 - physics.flexibility * 0.18);
+      } else if (!body.gameFracturedAt) {
+        damage = Math.max(0, damage - delta * 0.00006);
+      }
+      const deformation = clamp(
+        (damage * 0.72 + overload * 0.2) * (0.38 + physics.flexibility * 0.8),
+        0,
+        1,
+      );
+      body.gameStressRatio = stressRatio;
+      body.gameStressDamage = damage;
+      body.gameDeformation = Math.max(body.gameFracturedAt ? 0.72 : 0, deformation);
+      if (!body.gameBendDirection) body.gameBendDirection = body.position.x < BASE_X ? -1 : 1;
+
+      const weakened = 1 - body.gameDeformation * 0.68;
+      body.friction = Math.max(0.12, item.friction * weakened);
+      body.frictionStatic = Math.max(0.16, item.frictionStatic * weakened);
+      if (body.gameBaseInertia && Number.isFinite(body.gameBaseInertia)) {
+        Body.setInertia(body, Math.max(body.gameBaseInertia * 0.28, body.gameBaseInertia * weakened));
+      }
+
+      if (overload > 0) {
+        Matter.Sleeping.set(body, false);
+        const direction = body.gameBendDirection;
+        const halfWidth = (body.bounds.max.x - body.bounds.min.x) / 2;
+        Body.applyForce(
+          body,
+          { x: body.position.x - direction * halfWidth * 0.42, y: body.bounds.min.y + 4 },
+          { x: direction * body.mass * 0.000025 * Math.min(3, overload + 0.2), y: 0 },
+        );
+      }
+
+      if (damage < 1) return;
+      if (!body.gameFracturedAt) body.gameFracturedAt = this.elapsed;
+      const direction = body.gameBendDirection;
+      Body.setAngularVelocity(body, body.angularVelocity + direction * 0.0024 * Math.min(2.2, Math.max(1, stressRatio)));
+      if (this.elapsed - body.gameFracturedAt < 900) return;
+      const shownLoad = Math.max(10, Math.round(loadKg / 10) * 10);
+      const shownCapacity = Math.round(strengthenedCapacityKg / 10) * 10;
+      this.fail(
+        `「${item.name}」承受约 ${shownLoad} kg，超过强化承重 ${shownCapacity} kg，${physics.failureLabel}，最终引发垮塌。换用更宽、更强的材料分担载荷，再试一次，你已经掌握关键了！`,
+      );
+    });
   }
 
   private isRestingOn(body: TaggedBody, support: TaggedBody) {
@@ -1468,8 +1627,12 @@ class TowerPhysicsGame {
     Matter.Sleeping.set(support, false);
     const gait = Math.sin(pose.routePosition * Math.PI * 2);
     const gravityScale = this.engine.gravity.scale || 0.001;
-    const downwardForce = ROBOT_MASS * gravityScale * (1 + Math.abs(gait) * 0.12);
-    const lateralForce = pose.sequenceElapsed < ROBOT_CLIMB_DURATION ? gait * ROBOT_MASS * gravityScale * 0.065 : 0;
+    const robotMatterMass = ROBOT_PHYSICS.massKg * PHYSICS_MASS_PER_KG;
+    const gaitPulse = 1 + Math.abs(gait) * (0.16 - ROBOT_PHYSICS.flexibility * 0.08);
+    const downwardForce = robotMatterMass * gravityScale * gaitPulse;
+    const lateralForce = pose.sequenceElapsed < ROBOT_CLIMB_DURATION
+      ? gait * robotMatterMass * gravityScale * (0.085 - ROBOT_PHYSICS.stability * 0.025)
+      : 0;
     const contactPoint = {
       x: clamp(pose.anchor.x, support.bounds.min.x + 2, support.bounds.max.x - 2),
       y: clamp(pose.anchor.y, support.bounds.min.y + 2, support.bounds.max.y - 2),
@@ -1660,6 +1823,13 @@ class TowerPhysicsGame {
     ctx.save();
     ctx.translate(body.position.x, body.position.y);
     ctx.rotate(body.angle);
+    const deformation = body.gameDeformation ?? 0;
+    const bendDirection = body.gameBendDirection ?? 1;
+    if (item.shape === "circle") {
+      ctx.scale(1 + deformation * 0.08, 1 - deformation * 0.1);
+    } else if (deformation > 0) {
+      ctx.transform(1, 0, bendDirection * deformation * 0.16, 1 - deformation * 0.065, 0, item.height * deformation * 0.025);
+    }
     const drewArtwork = this.drawItemArtwork(item);
     if (!drewArtwork && item.shape === "circle") {
       ctx.fillStyle = item.color;
@@ -1690,6 +1860,20 @@ class TowerPhysicsGame {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(item.shortName, 0, 1);
+    }
+    if (deformation > 0.18 && item.shape !== "circle") {
+      ctx.globalAlpha = clamp((deformation - 0.18) * 1.45, 0, 0.78);
+      ctx.strokeStyle = deformation > 0.72 ? "rgba(255, 171, 105, 0.9)" : "rgba(35, 30, 25, 0.9)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(-item.width * 0.22, -item.height * 0.42);
+      ctx.lineTo(-item.width * 0.06, -item.height * 0.12);
+      ctx.lineTo(-item.width * 0.17, item.height * 0.08);
+      ctx.moveTo(item.width * 0.18, -item.height * 0.34);
+      ctx.lineTo(item.width * 0.04, item.height * 0.02);
+      ctx.lineTo(item.width * 0.2, item.height * 0.28);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
     ctx.restore();
   }
@@ -2128,6 +2312,8 @@ export function DawnTowerGame() {
                     <li>从右侧物品栏拖出垃圾，放入场景中的有效搭建区域。</li>
                     <li>第一件物品可以直接落在地面；从第二件开始，必须堆放在上一件物品之上。</li>
                     <li>松手后物品会受到重力、碰撞和重心影响；已经放置的物品仍可拖动调整。</li>
+                    <li>每种废料具有接近现实的相对重量、摩擦稳定性与承重差异；承重强度统一按现实参考值强化至约 3 倍。</li>
+                    <li>持续超出承重上限时，物件会先弯折、压瘪或开裂，随后摩擦与稳定性下降，并可能引发整体垮塌。</li>
                     <li>垃圾堆抵达吊篮下方的 99 米位置并保持稳定后，机器人会开始攀爬。</li>
                     <li>机器人本身具有重量，攀爬时会把移动载荷传给脚下和手边的废料，因此塔体必须能承受偏心受力。</li>
                   </ol>
