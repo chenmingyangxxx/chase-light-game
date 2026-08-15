@@ -991,49 +991,94 @@ class TowerPhysicsGame {
   private drawGoalSkylight(illuminate: number) {
     const ctx = this.context;
     const focusX = GOAL_BASKET_X;
-    const focusY = GOAL_BASKET_Y + 24;
-    const beamTopY = BACKDROP_TOP - 72;
-    const beamBottomY = focusY + 58;
-    const pulse = 0.92 + Math.sin(this.elapsed / 780) * 0.08;
-    const strength = (0.22 + illuminate * 0.2) * pulse;
+    const focusY = GOAL_BASKET_Y + 18;
+    const beamTopY = BACKDROP_TOP - 24;
+    const beamBottomY = focusY + 66;
+    // A small lateral drift suggests moving haze rather than a mechanical
+    // spotlight. The light remains present before success because 99 m is the
+    // first altitude where sunlight reaches this world.
+    const sourceX = focusX - 72 + Math.sin(this.elapsed / 3100) * 4;
+    const pulse = 0.96 + Math.sin(this.elapsed / 1500) * 0.04;
+    const strength = (0.12 + illuminate * 0.13) * pulse;
 
     ctx.save();
     ctx.globalCompositeOperation = "screen";
 
-    const beam = ctx.createLinearGradient(0, beamTopY, 0, beamBottomY);
-    beam.addColorStop(0, "rgba(255, 249, 211, 0)");
-    beam.addColorStop(0.18, `rgba(255, 244, 194, ${strength * 0.42})`);
-    beam.addColorStop(0.76, `rgba(255, 224, 139, ${strength * 0.72})`);
-    beam.addColorStop(1, "rgba(255, 217, 122, 0)");
-    ctx.fillStyle = beam;
+    // A broad, blurred atmospheric veil is the body of the Tyndall effect.
+    // Its edges deliberately dissolve into the polluted air.
+    ctx.save();
+    ctx.filter = "blur(18px)";
+    const veil = ctx.createLinearGradient(sourceX, beamTopY, focusX, beamBottomY);
+    veil.addColorStop(0, "rgba(255, 252, 226, 0)");
+    veil.addColorStop(0.16, `rgba(255, 248, 213, ${strength * 0.34})`);
+    veil.addColorStop(0.7, `rgba(255, 235, 173, ${strength * 0.54})`);
+    veil.addColorStop(1, "rgba(255, 224, 143, 0)");
+    ctx.fillStyle = veil;
     ctx.beginPath();
-    ctx.moveTo(focusX - 29, beamTopY);
-    ctx.lineTo(focusX + 29, beamTopY);
-    ctx.lineTo(focusX + 82, beamBottomY);
-    ctx.lineTo(focusX - 82, beamBottomY);
+    ctx.moveTo(sourceX - 34, beamTopY);
+    ctx.lineTo(sourceX + 44, beamTopY);
+    ctx.lineTo(focusX + 106, beamBottomY);
+    ctx.lineTo(focusX - 92, beamBottomY);
     ctx.closePath();
     ctx.fill();
+    ctx.restore();
 
-    const halo = ctx.createRadialGradient(focusX, focusY, 2, focusX, focusY, 76);
-    halo.addColorStop(0, `rgba(255, 245, 181, ${0.42 + illuminate * 0.2})`);
-    halo.addColorStop(0.34, `rgba(238, 229, 148, ${0.2 + illuminate * 0.12})`);
-    halo.addColorStop(1, "rgba(219, 229, 158, 0)");
+    // Several unequally spaced shafts make the light feel filtered through
+    // broken cloud and suspended dust instead of drawn as one solid cone.
+    const shafts = [
+      { start: -31, end: -48, topWidth: 5, bottomWidth: 18, opacity: 0.62 },
+      { start: -12, end: -15, topWidth: 8, bottomWidth: 25, opacity: 0.82 },
+      { start: 9, end: 24, topWidth: 4, bottomWidth: 16, opacity: 0.48 },
+      { start: 27, end: 51, topWidth: 6, bottomWidth: 22, opacity: 0.68 },
+    ];
+    for (const shaft of shafts) {
+      const startX = sourceX + shaft.start;
+      const endX = focusX + shaft.end;
+      const ray = ctx.createLinearGradient(startX, beamTopY, endX, beamBottomY);
+      ray.addColorStop(0, "rgba(255, 253, 231, 0)");
+      ray.addColorStop(0.12, `rgba(255, 250, 221, ${strength * shaft.opacity})`);
+      ray.addColorStop(0.72, `rgba(255, 237, 184, ${strength * shaft.opacity * 0.86})`);
+      ray.addColorStop(1, "rgba(255, 225, 151, 0)");
+      ctx.save();
+      ctx.filter = "blur(4px)";
+      ctx.fillStyle = ray;
+      ctx.beginPath();
+      ctx.moveTo(startX - shaft.topWidth, beamTopY);
+      ctx.lineTo(startX + shaft.topWidth, beamTopY);
+      ctx.lineTo(endX + shaft.bottomWidth, beamBottomY);
+      ctx.lineTo(endX - shaft.bottomWidth, beamBottomY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // A low, elliptical pool connects the rays to the flower without looking
+    // like a circular UI halo.
+    const halo = ctx.createRadialGradient(0, 0, 1, 0, 0, 58);
+    halo.addColorStop(0, `rgba(255, 246, 190, ${0.22 + illuminate * 0.12})`);
+    halo.addColorStop(0.46, `rgba(244, 232, 167, ${0.09 + illuminate * 0.07})`);
+    halo.addColorStop(1, "rgba(225, 231, 171, 0)");
+    ctx.save();
+    ctx.translate(focusX, focusY);
+    ctx.scale(1.45, 0.58);
     ctx.fillStyle = halo;
     ctx.beginPath();
-    ctx.arc(focusX, focusY, 76, 0, Math.PI * 2);
+    ctx.arc(0, 0, 58, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
 
     // Deterministic drifting dust keeps the effect alive without allocating
     // particles or introducing frame-rate-dependent simulation state.
-    for (let index = 0; index < 13; index += 1) {
-      const travel = ((this.elapsed * (0.012 + index * 0.0007) + index * 37) % 210) / 210;
+    for (let index = 0; index < 19; index += 1) {
+      const travel = ((this.elapsed * (0.008 + index * 0.00033) + index * 41) % 240) / 240;
       const y = beamBottomY - travel * (beamBottomY - beamTopY);
-      const spread = 24 + (1 - travel) * 47;
-      const x = focusX + Math.sin(index * 4.13 + this.elapsed / 680) * spread;
-      const alpha = Math.sin(travel * Math.PI) * (0.18 + illuminate * 0.1);
+      const centerX = focusX + (sourceX - focusX) * travel;
+      const spread = 24 + (1 - travel) * 58;
+      const x = centerX + Math.sin(index * 4.13 + this.elapsed / 920) * spread;
+      const alpha = Math.sin(travel * Math.PI) * (0.1 + illuminate * 0.055);
       ctx.fillStyle = `rgba(255, 242, 188, ${alpha})`;
       ctx.beginPath();
-      ctx.arc(x, y, 0.8 + (index % 3) * 0.45, 0, Math.PI * 2);
+      ctx.arc(x, y, 0.55 + (index % 3) * 0.36, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
