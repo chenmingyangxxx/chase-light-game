@@ -329,7 +329,7 @@ class TowerPhysicsGame {
   private cameraManualOffsetY = 0;
   private panning: { pointerId: number; lastClientY: number } | null = null;
   private baseBody: Matter.Body | null = null;
-  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky", HTMLImageElement>;
+  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris", HTMLImageElement>;
 
   constructor(canvas: HTMLCanvasElement, level: LevelConfig, onUpdate: (snapshot: GameSnapshot) => void, onClear: () => void) {
     const context = canvas.getContext("2d");
@@ -348,6 +348,7 @@ class TowerPhysicsGame {
       // in the physical world so a placed object keeps its front-facing form.
       junk: this.loadArtwork("/assets/front-prop-atlas.png"),
       risky: this.loadArtwork("/assets/front-risky-props.png"),
+      debris: this.loadArtwork("/assets/ground-debris-foreground.png"),
     };
     this.createWorld();
   }
@@ -502,10 +503,16 @@ class TowerPhysicsGame {
       friction: 0.8,
       label: "recovery-floor",
     });
+    const stackPlatform = Bodies.rectangle(BASE_X, BASE_Y - 12, 242, 24, {
+      isStatic: true,
+      friction: 1.08,
+      frictionStatic: 1.2,
+      label: "stack-platform",
+    });
     const leftWall = Bodies.rectangle(16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
     const rightWall = Bodies.rectangle(WORLD_WIDTH - 16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
     this.baseBody = base;
-    World.add(this.engine.world, [base, recoveryFloor, leftWall, rightWall]);
+    World.add(this.engine.world, [base, recoveryFloor, stackPlatform, leftWall, rightWall]);
   }
 
   private readonly onPointerMove = (event: PointerEvent) => {
@@ -699,7 +706,8 @@ class TowerPhysicsGame {
       this.collapseElapsed = 0;
     }
 
-    if (currentHeight >= this.level.target && stable && this.stableElapsed > 1250) this.activateLight();
+    const hasRealStack = towerBodies.some((body) => (supportGraph.depth.get(body) ?? 0) >= 2);
+    if (currentHeight >= this.level.target && hasRealStack && stable && this.stableElapsed > 1250) this.activateLight();
   }
 
   private recoverMisplacedBodies() {
@@ -725,7 +733,9 @@ class TowerPhysicsGame {
     const candidates = this.dynamicBodies.filter((body) => !this.isFallen(body));
     const depth = new Map<TaggedBody, number>();
     candidates.forEach((body) => {
-      if (body.bounds.max.y >= BASE_Y - 10 && body.bounds.min.y <= BASE_Y + 16) depth.set(body, 1);
+      // Both the open ground and the raised central scrap platform are valid
+      // physical foundations for a stack.
+      if (body.bounds.max.y >= BASE_Y - 32 && body.bounds.min.y <= BASE_Y + 16) depth.set(body, 1);
     });
 
     let changed = true;
@@ -897,6 +907,14 @@ class TowerPhysicsGame {
     ctx.fillStyle = `rgba(5, 13, 15, ${0.22 - illuminate * 0.14})`;
     ctx.fillRect(0, backdropTop, WORLD_WIDTH, backdropHeight);
 
+    if (this.imageReady(this.artwork.debris)) {
+      ctx.save();
+      ctx.globalAlpha = 0.94 - illuminate * 0.2;
+      ctx.drawImage(this.artwork.debris, 0, BASE_Y - 210, WORLD_WIDTH, 210);
+      ctx.restore();
+    }
+    this.drawStackPlatform();
+
   }
 
   private drawLongBackdrop(image: HTMLImageElement) {
@@ -939,6 +957,60 @@ class TowerPhysicsGame {
       ctx.lineTo(x + sway + 4, baseY - stem * 0.7);
       ctx.stroke();
       ctx.strokeStyle = "#79b55c";
+    }
+    ctx.restore();
+  }
+
+  private drawStackPlatform() {
+    const ctx = this.context;
+    const width = 242;
+    const height = 24;
+    const x = BASE_X - width / 2;
+    const y = BASE_Y - 24;
+    ctx.save();
+
+    // A short, static steel deck resting on a compact rubbish mound. It is
+    // drawn here and mirrored by the Matter static body created in createWorld.
+    ctx.fillStyle = "rgba(13, 20, 21, 0.55)";
+    ctx.beginPath();
+    ctx.ellipse(BASE_X, BASE_Y - 4, 152, 21, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(46, 50, 46, 0.92)";
+    ctx.beginPath();
+    ctx.moveTo(x + 18, BASE_Y - 7);
+    ctx.lineTo(x + 48, BASE_Y - 20);
+    ctx.lineTo(x + width - 48, BASE_Y - 20);
+    ctx.lineTo(x + width - 18, BASE_Y - 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(94, 85, 62, 0.72)";
+    for (let index = 0; index < 6; index += 1) {
+      const rubbleX = x + 30 + index * 34;
+      ctx.beginPath();
+      ctx.arc(rubbleX, BASE_Y - 9 - (index % 2) * 3, 9 + (index % 3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    roundedRect(ctx, x, y, width, height, 5);
+    ctx.fillStyle = "#3d4b4a";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(14, 24, 25, 0.95)";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.fillStyle = "rgba(161, 170, 148, 0.36)";
+    ctx.fillRect(x + 8, y + 7, width - 16, 5);
+    ctx.strokeStyle = "rgba(174, 150, 90, 0.8)";
+    ctx.lineWidth = 2;
+    for (let railX = x + 18; railX < x + width - 14; railX += 24) {
+      ctx.beginPath();
+      ctx.moveTo(railX, y + 15);
+      ctx.lineTo(railX + 10, y + 28);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(205, 210, 184, 0.65)";
+    for (const boltX of [x + 12, x + width - 12]) {
+      ctx.beginPath();
+      ctx.arc(boltX, y + 17, 2.4, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
   }
