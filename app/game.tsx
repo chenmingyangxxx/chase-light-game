@@ -2062,13 +2062,19 @@ type ConfirmationAction = "reset" | "exit" | null;
 function GameStage({ level, onExit }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<TowerPhysicsGame | null>(null);
+  const endingVideoRef = useRef<HTMLVideoElement>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
+  const [endingPlaying, setEndingPlaying] = useState(false);
+  const [endingComplete, setEndingComplete] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const game = new TowerPhysicsGame(canvas, level, setSnapshot, () => undefined);
+    const game = new TowerPhysicsGame(canvas, level, setSnapshot, () => {
+      setEndingComplete(false);
+      setEndingPlaying(true);
+    });
     gameRef.current = game;
     game.start();
     return () => {
@@ -2085,6 +2091,15 @@ function GameStage({ level, onExit }: GameStageProps) {
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [confirmation]);
+
+  useEffect(() => {
+    if (!endingPlaying) return;
+    const video = endingVideoRef.current;
+    if (!video) return;
+    video.currentTime = 0;
+    const playback = video.play();
+    if (playback) void playback.catch(() => setEndingComplete(true));
+  }, [endingPlaying]);
 
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
@@ -2155,18 +2170,18 @@ function GameStage({ level, onExit }: GameStageProps) {
               {Object.values(snapshot.inventory).every((count) => count === 0) && <p className="empty-inventory">物料已经用完，建议重试本关。</p>}
             </div>
           </aside>
-          {(snapshot.status === "cleared" || snapshot.status === "failed") && (
+          {snapshot.status === "failed" && (
             <div className="modal-scrim result-scrim">
-              <div className={`secondary-dialog result-dialog ${snapshot.status}`} role="alertdialog" aria-modal="true" aria-labelledby="result-title">
-                <div className="result-symbol" aria-hidden="true">{snapshot.status === "cleared" ? "✦" : "↯"}</div>
-                <strong id="result-title">{snapshot.status === "cleared" ? "抵达新芽" : "高塔失稳"}</strong>
-                <p>{snapshot.status === "cleared" ? "99 米处的生命正在复苏。" : snapshot.message}</p>
+              <div className="secondary-dialog result-dialog failed" role="alertdialog" aria-modal="true" aria-labelledby="result-title">
+                <div className="result-symbol" aria-hidden="true">↯</div>
+                <strong id="result-title">高塔失稳</strong>
+                <p>{snapshot.message}</p>
                 <div className="dialog-actions single-action">
                   <button className="dialog-button primary" type="button" onClick={() => {
                     setConfirmation(null);
                     gameRef.current?.restart();
                   }}>
-                    {snapshot.status === "cleared" ? "再次挑战" : "重新搭建"}
+                    重新搭建
                   </button>
                 </div>
               </div>
@@ -2199,6 +2214,45 @@ function GameStage({ level, onExit }: GameStageProps) {
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+          {endingPlaying && (
+            <div className={`ending-cinematic ${endingComplete ? "is-complete" : ""}`} aria-label="通关结尾">
+              <video
+                ref={endingVideoRef}
+                className="ending-cinematic-video"
+                autoPlay
+                muted
+                playsInline
+                preload="auto"
+                onEnded={(event) => {
+                  const video = event.currentTarget;
+                  if (Number.isFinite(video.duration)) video.currentTime = Math.max(0, video.duration - 0.04);
+                  video.pause();
+                  setEndingComplete(true);
+                }}
+                onError={() => setEndingComplete(true)}
+              >
+                <source src="/assets/victory-ending.mp4" type="video/mp4" />
+              </video>
+              {endingComplete && (
+                <>
+                  <div className="ending-wordmark" aria-label="追光">
+                    <img src="/assets/chase-light-brush-wordmark.png" alt="追光" />
+                  </div>
+                  <button
+                    className="ending-home-button"
+                    type="button"
+                    onClick={() => {
+                      setEndingPlaying(false);
+                      setEndingComplete(false);
+                      onExit();
+                    }}
+                  >
+                    返回主页
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
