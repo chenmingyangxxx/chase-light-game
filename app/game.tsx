@@ -1679,8 +1679,12 @@ export function DawnTowerGame() {
         <section className="launch-content">
           <div className="launch-brand">
             <img className="launch-emblem" src="/assets/pursue-light-hook-logo.png" alt="" />
-            <h1 id="launch-title">追光</h1>
+            <h1 id="launch-title" className="launch-wordmark" aria-label="追.光">
+              <img src="/assets/chase-light-brush-wordmark.png" alt="" />
+              <i aria-hidden="true">.</i>
+            </h1>
             <p className="launch-english">CHASE THE LIGHT</p>
+            <p className="launch-story">光之故事 · 99米新生</p>
           </div>
 
           <div className="launch-actions">
@@ -1699,7 +1703,7 @@ export function DawnTowerGame() {
 
   return (
     <main className="game-app minimal-game">
-      <h1 className="sr-only">追光</h1>
+      <h1 className="sr-only">追.光</h1>
       <GameStage key={level.id} level={level} />
     </main>
   );
