@@ -17,6 +17,12 @@ const BASE_X = 306;
 const BASE_Y = 1860;
 const PIXELS_PER_METER = 10;
 const GOAL_BASKET_X = BASE_X + 14;
+// The basket's lower rail is exactly the 99 m success position. Its crane,
+// rope and flower are placed around that fixed world-space altitude.
+const GOAL_REACH_HEIGHT = 99;
+const GOAL_REACH_Y = BASE_Y - GOAL_REACH_HEIGHT * PIXELS_PER_METER;
+const GOAL_BASKET_Y = GOAL_REACH_Y - 72;
+const GOAL_REACH_HALF_WIDTH = 116;
 const RECOVERY_Y = BASE_Y + 94;
 const BACKDROP_TOP = 600;
 const BACKDROP_BOTTOM = BASE_Y + 124;
@@ -250,9 +256,10 @@ const ITEMS: Record<ItemId, ItemDefinition> = {
   },
 };
 
-// Keep displayed prop dimensions close to their physical collision footprint.
-// The original scale was too small to make a recognisable, readable tower.
-const PROP_SCALE = 1.35;
+// One world metre equals 10 pixels. Scale the real-world-inspired prop
+// dimensions down to that same scene measure, so a container or car no longer
+// reads as a large fraction of the entire 99 m climb.
+const PROP_SCALE = 0.32;
 Object.values(ITEMS).forEach((item) => {
   item.width = Math.round(item.width * PROP_SCALE);
   item.height = Math.round(item.height * PROP_SCALE);
@@ -261,12 +268,12 @@ Object.values(ITEMS).forEach((item) => {
 const LEVELS: LevelConfig[] = [
   {
     id: 1,
-    target: 99,
+    target: GOAL_REACH_HEIGHT,
     title: "新芽吊篮",
-    subtitle: "在悬空的新生花朵下，把稳定的废料塔堆至 99 米。",
+    subtitle: "把稳定的废料塔堆到吊篮下沿，攀爬助手便会出发摘取新芽。",
     baseWidth: 242,
     wind: 0,
-    inventory: ["slab", "slab", "slab", "pallet", "pallet", "container", "container", "container", "container", "car", "car", "scaffold", "scaffold", "scaffold", "scaffold", "fridge", "fridge", "fridge", "cabinet", "cabinet", "washer", "washer", "crate", "crate", "crate", "crate", "beam", "beam", "beam", "beam", "ladder", "pipes"],
+    inventory: ["slab", "slab", "slab", "pallet", "pallet", "container", "container", "container", "container", "container", "container", "car", "car", "scaffold", "scaffold", "scaffold", "scaffold", "scaffold", "scaffold", "fridge", "fridge", "fridge", "cabinet", "cabinet", "washer", "washer", "crate", "crate", "crate", "crate", "beam", "beam", "beam", "beam", "ladder", "pipes"],
     hintItems: ["slab", "scaffold", "beam"],
   },
 ];
@@ -284,7 +291,7 @@ function hintsFor(level: LevelConfig): HintSpec[] {
   return [
     { itemId: first, xMeters: 0, yMeters: 1.8, rotation: 0, text: `先选择「${ITEMS[first].name}」，横放在绿色落点上，铺出宽底座。` },
     { itemId: second, xMeters: 0, yMeters: secondHeight, rotation: 0, text: `接着用「${ITEMS[second].name}」补高，重心尽量对准中线。` },
-    { itemId: third, xMeters: 0, yMeters: finalHeight, rotation: 0, text: `最后用「${ITEMS[third].name}」封顶，保持水平接近 99 米的新芽。` },
+    { itemId: third, xMeters: 0, yMeters: finalHeight, rotation: 0, text: `最后用「${ITEMS[third].name}」封顶，保持水平接近吊篮下沿。` },
   ];
 }
 
@@ -333,7 +340,7 @@ class TowerPhysicsGame {
   private cameraManualOffsetY = 0;
   private panning: { pointerId: number; lastClientY: number } | null = null;
   private baseBody: Matter.Body | null = null;
-  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris" | "goal" | "robot" | "monitor", HTMLImageElement>;
+  private readonly artwork: Record<"polluted" | "revived" | "junk" | "risky" | "debris" | "goal" | "monitor", HTMLImageElement>;
 
   constructor(canvas: HTMLCanvasElement, level: LevelConfig, onUpdate: (snapshot: GameSnapshot) => void, onClear: () => void) {
     const context = canvas.getContext("2d");
@@ -355,7 +362,6 @@ class TowerPhysicsGame {
       monitor: this.loadArtwork("/assets/worn-monitor.png"),
       debris: this.loadArtwork("/assets/ground-debris-foreground.png"),
       goal: this.loadArtwork("/assets/crane-basket-sprout.png"),
-      robot: this.loadArtwork("/assets/sprout-helper-robot.png"),
     };
     this.createWorld();
   }
@@ -510,10 +516,10 @@ class TowerPhysicsGame {
   private createEngine() {
     return Engine.create({
       enableSleeping: true,
-      positionIterations: 14,
-      velocityIterations: 12,
-      constraintIterations: 3,
-      gravity: { x: 0, y: 1, scale: 0.001 },
+      positionIterations: 16,
+      velocityIterations: 14,
+      constraintIterations: 4,
+      gravity: { x: 0, y: 1, scale: 0.00108 },
     });
   }
 
@@ -669,7 +675,9 @@ class TowerPhysicsGame {
       friction: item.friction,
       frictionStatic: item.frictionStatic,
       restitution: item.restitution,
-      frictionAir: 0.018,
+      // Lower air damping leaves genuine wobble visible. Stability must come
+      // from a wide support footprint and a centred load, not hidden damping.
+      frictionAir: 0.006,
       // Tight contact tolerance reduces the visible air gaps in a carefully
       // placed stack while retaining normal Matter collision resolution.
       slop: 0.001,
@@ -679,6 +687,12 @@ class TowerPhysicsGame {
       ? Bodies.circle(x, y, item.width / 2, options)
       : Bodies.rectangle(x, y, item.width, item.height, options)) as TaggedBody;
     Body.setAngle(body, angle);
+    const centreHeightBias = item.role === "tall" ? -item.height * 0.12
+      : item.role === "risky" ? -item.height * 0.08
+        : item.role === "foundation" ? item.height * 0.035
+          : 0;
+    if (centreHeightBias !== 0) Body.setCentre(body, { x: 0, y: centreHeightBias }, true);
+    if (item.role === "tall" || item.role === "risky") Body.setInertia(body, body.inertia * 0.8);
     body.gameItem = item;
     body.gameBornAt = this.elapsed;
     return body;
@@ -718,8 +732,8 @@ class TowerPhysicsGame {
     const unsupportedAtRest = this.dynamicBodies.some((body) =>
       !supportGraph.depth.has(body)
       && this.elapsed - (body.gameBornAt ?? this.elapsed) > 850
-      && body.speed < 0.33
-      && Math.abs(body.angularVelocity) < 0.035,
+      && body.speed < 0.25
+      && Math.abs(body.angularVelocity) < 0.025,
     );
     if (unsupportedAtRest) {
       this.fail("物件没有堆在上一件物品上，挑战失败。");
@@ -738,7 +752,7 @@ class TowerPhysicsGame {
     const currentHeight = this.measureHeight(supportGraph.bodies);
     this.height = currentHeight;
     const settledBodies = this.dynamicBodies.filter((body) => !this.isFallen(body));
-    const stable = !this.adjusting && towerBodies.length > 0 && settledBodies.every((body) => body.speed < 0.33 && Math.abs(body.angularVelocity) < 0.035);
+    const stable = !this.adjusting && towerBodies.length > 0 && settledBodies.every((body) => body.speed < 0.25 && Math.abs(body.angularVelocity) < 0.025);
     if (stable) {
       this.stableElapsed += delta;
       if (this.stableElapsed > 620) this.stableHeight = Math.max(this.stableHeight, currentHeight);
@@ -756,11 +770,19 @@ class TowerPhysicsGame {
     }
 
     const hasRealStack = towerBodies.some((body) => (supportGraph.depth.get(body) ?? 0) >= 2);
-    if (currentHeight >= this.level.target && hasRealStack && stable && this.stableElapsed > 1250) this.activateLight();
+    if (this.hasReachedBasket(towerBodies, supportGraph.depth) && hasRealStack && stable && this.stableElapsed > 1250) this.activateLight();
   }
 
   private towerBodies() {
     return this.supportGraph().bodies;
+  }
+
+  private hasReachedBasket(towerBodies: TaggedBody[], depth: Map<TaggedBody, number>) {
+    const reachableTop = towerBodies
+      .filter((body) => (depth.get(body) ?? 0) >= 2)
+      .filter((body) => body.bounds.max.x >= GOAL_BASKET_X - GOAL_REACH_HALF_WIDTH && body.bounds.min.x <= GOAL_BASKET_X + GOAL_REACH_HALF_WIDTH)
+      .sort((a, b) => a.bounds.min.y - b.bounds.min.y)[0];
+    return Boolean(reachableTop && reachableTop.bounds.min.y <= GOAL_REACH_Y);
   }
 
   private supportGraph() {
@@ -797,12 +819,12 @@ class TowerPhysicsGame {
     const narrowest = Math.min(body.bounds.max.x - body.bounds.min.x, support.bounds.max.x - support.bounds.min.x);
     const verticalGap = support.bounds.min.y - body.bounds.max.y;
     return body.position.y < support.position.y - 2
-      && overlap >= Math.max(10, narrowest * 0.25)
+      && overlap >= Math.max(4, narrowest * 0.32)
       // The small tolerance is intentionally tighter than Matter's default
       // resting slop: a stack now reads as physically touching instead of
       // showing a visible gap between two connected props.
-      && verticalGap >= -6
-      && verticalGap <= 10;
+      && verticalGap >= -4
+      && verticalGap <= 7;
   }
 
   private hasValidStackPosition(item: ItemDefinition | undefined, x: number, y: number, excluded?: TaggedBody) {
@@ -824,11 +846,11 @@ class TowerPhysicsGame {
       // may already overlap its target by a few pixels. Treat that shallow
       // penetration as a normal landing: Matter resolves it upward on the next
       // tick. A body beside or below the support still cannot pass.
-      const landingSlack = Math.max(18, Math.min(42, item.height * 0.42));
+      const landingSlack = Math.max(4, Math.min(18, item.height * 0.42));
       const arrivesFromAbove = y < support.position.y - 2;
       return arrivesFromAbove
         && proposedBottom <= support.bounds.min.y + landingSlack
-        && overlap >= Math.max(14, narrowest * 0.3);
+        && overlap >= Math.max(4, narrowest * 0.35);
     });
   }
 
@@ -846,14 +868,14 @@ class TowerPhysicsGame {
     if (this.status !== "building") return;
     this.status = "activating";
     this.activationAt = this.elapsed;
-    this.message = "塔身稳定并达到目标高度，地表复苏系统启动。";
+    this.message = "废料塔已抵达吊篮下沿，攀爬助手开始登塔。";
     this.emit(true);
   }
 
   private finishClear() {
     if (this.status !== "activating") return;
     this.status = "cleared";
-    this.message = this.level.id === 10 ? "最后一座高塔达成，废土迎来了黎明。" : "目标高度已达成，土地正在恢复生机。";
+    this.message = this.level.id === 10 ? "最后一座高塔达成，废土迎来了黎明。" : "攀爬助手已摘下新芽，土地正在恢复生机。";
     this.onClear();
     this.emit(true);
   }
@@ -1033,7 +1055,7 @@ class TowerPhysicsGame {
   private drawGoalRig(collectProgress: number) {
     const ctx = this.context;
     const basketX = GOAL_BASKET_X;
-    const basketY = BASE_Y - 99 * PIXELS_PER_METER + 16;
+    const basketY = GOAL_BASKET_Y;
     const boomY = basketY - 150;
     ctx.save();
     ctx.strokeStyle = "rgba(41, 50, 49, 0.94)";
@@ -1122,42 +1144,167 @@ class TowerPhysicsGame {
   }
 
   private drawSuccessRobot() {
-    if (!this.imageReady(this.artwork.robot)) return;
     const ctx = this.context;
     const basketX = GOAL_BASKET_X;
-    const basketY = BASE_Y - 99 * PIXELS_PER_METER + 16;
+    const basketY = GOAL_BASKET_Y;
     const progress = this.activationProgress();
-    // The completion beat explicitly follows the game's core loop: the helper
-    // starts at the steel plate, climbs the finished rubbish tower, then takes
-    // the sprout from the suspended basket.
-    const climb = clamp((progress - 0.06) / 0.56, 0, 1);
-    const approach = clamp((progress - 0.56) / 0.16, 0, 1);
-    const grasp = clamp((progress - 0.73) / 0.18, 0, 1);
-    const easeClimb = 1 - (1 - climb) * (1 - climb);
-    // Keep the helper deliberately small against a 99 m tower. Its scale is
-    // half the previous presentation so the completed stack remains the hero.
-    const robotWidth = 49;
-    const robotHeight = 74;
-    const startX = BASE_X - 10;
-    const targetX = basketX - 25;
-    const smoothApproach = approach * approach * (3 - 2 * approach);
-    const stepPhase = this.elapsed / 86;
-    const robotX = startX + (targetX - startX) * smoothApproach + Math.sin(stepPhase) * 1.3 * (1 - approach);
-    const robotY = (BASE_Y - robotHeight + 2) + ((basketY - 69) - (BASE_Y - robotHeight + 2)) * easeClimb;
-    const stepBounce = Math.sin(stepPhase * 2) * 1.35 * (1 - approach * 0.45);
+    const route = this.climbRoute();
+    if (route.length === 0) return;
+    const climb = clamp((progress - 0.05) / 0.65, 0, 1);
+    const grab = clamp((progress - 0.72) / 0.2, 0, 1);
+    const routePosition = climb * Math.max(0, route.length - 1);
+    const routeIndex = Math.min(route.length - 2, Math.max(0, Math.floor(routePosition)));
+    const step = route.length === 1 ? 1 : routePosition - routeIndex;
+    const lowerHold = route[routeIndex] ?? route[0];
+    const upperHold = route[Math.min(route.length - 1, routeIndex + 1)] ?? lowerHold;
+    const easedStep = step * step * (3 - 2 * step);
+    const anchor = {
+      x: lowerHold.x + (upperHold.x - lowerHold.x) * easedStep,
+      y: lowerHold.y + (upperHold.y - lowerHold.y) * easedStep,
+    };
+    const stride = Math.sin(easedStep * Math.PI);
+    const torso = { x: anchor.x + (upperHold.x - lowerHold.x) * 0.08, y: anchor.y - 30 - stride * 1.7 };
+    const pelvis = { x: torso.x, y: torso.y + 12 };
+    const shoulder = { x: torso.x, y: torso.y - 4 };
+    const leadFoot = {
+      x: lowerHold.x + (upperHold.x - lowerHold.x) * easedStep,
+      y: lowerHold.y + (upperHold.y - lowerHold.y) * easedStep - stride * 7,
+    };
+    const rearFoot = lowerHold;
+    const leftHand = {
+      x: lowerHold.x + (upperHold.x - lowerHold.x) * clamp((easedStep + 0.18) / 0.86, 0, 1),
+      y: lowerHold.y + (upperHold.y - lowerHold.y) * clamp((easedStep + 0.18) / 0.86, 0, 1) - 5,
+    };
+    const flowerHold = { x: basketX - 5, y: basketY - 50 };
+    const rightHand = {
+      x: upperHold.x + (flowerHold.x - upperHold.x) * grab,
+      y: upperHold.y - 5 + (flowerHold.y - (upperHold.y - 5)) * grab,
+    };
 
     ctx.save();
-    ctx.globalAlpha = Math.min(1, climb * 3.2);
-    ctx.translate(robotX, robotY + stepBounce);
-    ctx.rotate(-0.025 + Math.sin(stepPhase) * 0.028);
-    ctx.scale(1 + Math.sin(stepPhase * 2) * 0.012, 1 - Math.sin(stepPhase * 2) * 0.012);
-    ctx.drawImage(this.artwork.robot, -robotWidth / 2, 0, robotWidth, robotHeight);
+    ctx.globalAlpha = Math.min(1, climb * 4.2);
+    // Arms and legs use actual, stable body-top anchors from climbRoute().
+    // The animated helper is deliberately non-colliding so it never injects
+    // force into the validated tower while the victory beat plays.
+    this.drawJointedLimb({ x: pelvis.x - 7, y: pelvis.y + 3 }, { x: pelvis.x - 14 - stride * 4, y: pelvis.y + 14 }, rearFoot);
+    this.drawJointedLimb({ x: pelvis.x + 7, y: pelvis.y + 3 }, { x: pelvis.x + 14 + stride * 4, y: pelvis.y + 13 }, leadFoot);
+    this.drawJointedLimb({ x: shoulder.x - 12, y: shoulder.y }, { x: shoulder.x - 21 - stride * 4, y: shoulder.y - 1 }, leftHand);
+    this.drawJointedLimb({ x: shoulder.x + 12, y: shoulder.y }, { x: shoulder.x + 22 + stride * 4, y: shoulder.y - 8 }, rightHand);
+    this.drawRobotCore(torso, Math.atan2(upperHold.y - lowerHold.y, upperHold.x - lowerHold.x) * 0.09);
     ctx.restore();
 
-    if (grasp <= 0) return;
-    const flowerX = basketX + (robotX + 22 - basketX) * grasp;
-    const flowerY = basketY - 52 + (robotY + 17 - (basketY - 52)) * grasp;
-    this.drawCollectedSprout(flowerX, flowerY, 0.9 + grasp * 0.18);
+    if (grab <= 0) return;
+    this.drawCollectedSprout(rightHand.x - 1, rightHand.y - 3, 0.72 + grab * 0.16);
+  }
+
+  private climbRoute() {
+    const { bodies, depth } = this.supportGraph();
+    const candidates = bodies
+      .filter((body) => (depth.get(body) ?? 0) >= 2)
+      .filter((body) => body.bounds.max.x >= GOAL_BASKET_X - GOAL_REACH_HALF_WIDTH && body.bounds.min.x <= GOAL_BASKET_X + GOAL_REACH_HALF_WIDTH)
+      .sort((a, b) => a.bounds.min.y - b.bounds.min.y);
+    let current = candidates[0];
+    if (!current) return [] as Array<{ x: number; y: number }>;
+    const chain = [current];
+    while ((depth.get(current) ?? 0) > 1) {
+      const currentDepth = depth.get(current) ?? 0;
+      const support = bodies
+        .filter((body) => (depth.get(body) ?? 0) === currentDepth - 1 && this.isRestingOn(current, body))
+        .sort((a, b) => Math.abs(a.position.x - current.position.x) - Math.abs(b.position.x - current.position.x))[0];
+      if (!support) break;
+      chain.push(support);
+      current = support;
+    }
+    return chain.reverse().map((body) => ({
+      x: clamp(body.position.x, body.bounds.min.x + 8, body.bounds.max.x - 8),
+      y: body.bounds.min.y + 4,
+    }));
+  }
+
+  private drawJointedLimb(start: { x: number; y: number }, joint: { x: number; y: number }, end: { x: number; y: number }) {
+    const ctx = this.context;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#151e20";
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(joint.x, joint.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+    ctx.strokeStyle = "#64716b";
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(joint.x, joint.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+    [start, joint, end].forEach((point, index) => {
+      ctx.fillStyle = index === 2 ? "#9d8a59" : "#263235";
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, index === 1 ? 4.1 : 3.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(222, 206, 145, 0.65)";
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+    });
+  }
+
+  private drawRobotCore(torso: { x: number; y: number }, angle: number) {
+    const ctx = this.context;
+    ctx.save();
+    ctx.translate(torso.x, torso.y);
+    ctx.rotate(angle);
+    ctx.fillStyle = "#26362f";
+    roundedRect(ctx, -18, -10, 10, 28, 4);
+    ctx.fill();
+    ctx.fillStyle = "#59665c";
+    roundedRect(ctx, -13, -10, 26, 27, 5);
+    ctx.fill();
+    ctx.strokeStyle = "#182325";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#b9b29a";
+    roundedRect(ctx, -9, -5, 18, 14, 3);
+    ctx.fill();
+    ctx.fillStyle = "#2d3839";
+    roundedRect(ctx, -7, -3, 14, 10, 2);
+    ctx.fill();
+    ctx.strokeStyle = "#b7cd75";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-4, 2);
+    ctx.lineTo(4, 2);
+    ctx.stroke();
+    ctx.fillStyle = "#c2b99d";
+    roundedRect(ctx, -16, -29, 32, 17, 5);
+    ctx.fill();
+    ctx.strokeStyle = "#1b2627";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#253033";
+    roundedRect(ctx, -11, -25, 22, 9, 3);
+    ctx.fill();
+    [-5, 5].forEach((eyeX) => {
+      ctx.fillStyle = "#ecbf5b";
+      ctx.beginPath();
+      ctx.arc(eyeX, -20.5, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fff2a5";
+      ctx.beginPath();
+      ctx.arc(eyeX - 0.5, -21.2, 0.7, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.strokeStyle = "#4d5c56";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-8, -29);
+    ctx.lineTo(-12, -37);
+    ctx.stroke();
+    ctx.fillStyle = "#d7a94f";
+    ctx.beginPath();
+    ctx.arc(-12, -38, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   private drawCollectedSprout(x: number, y: number, scale: number) {
