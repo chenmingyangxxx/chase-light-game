@@ -574,7 +574,7 @@ body {
 .launch-emblem {
   width: clamp(180px, 31vw, 250px);
   height: auto;
-  margin: calc(-1 * clamp(34px, 7.5vh, 84px)) 0 -118px;
+  margin: calc(-1 * clamp(34px, 7.5vh, 84px)) 0 clamp(22px, 3.5vh, 42px);
   object-fit: contain;
   filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.42)) drop-shadow(0 0 18px rgba(181, 230, 105, 0.2));
 }
@@ -589,13 +589,27 @@ body {
 .launch-brand h1 {
   margin: 0;
   color: #f1f3dd;
-  font-family: "STKaiti", "KaiTi", "Microsoft YaHei", sans-serif;
-  font-size: clamp(43px, 8vw, 68px);
-  font-weight: 600;
-  letter-spacing: .08em;
-  line-height: 1;
-  text-indent: .08em;
-  text-shadow: 0 1px 0 rgba(255, 255, 235, 0.18), 0 3px 22px rgba(0, 0, 0, 0.48);
+  font-family: "STXingkai", "FZShuTi", "STKaiti", "KaiTi", serif;
+  font-size: clamp(62px, 12vw, 92px);
+  font-weight: 700;
+  letter-spacing: .04em;
+  line-height: .88;
+  text-shadow: 0 1px 0 rgba(255, 255, 235, 0.24), 1px 2px 0 rgba(132, 147, 112, 0.34), 0 7px 24px rgba(0, 0, 0, 0.5);
+}
+.launch-brand h1 span {
+  display: inline-block;
+  transform: skewX(-4deg);
+}
+.launch-brand h1 span:last-child { transform: translateY(2px) skewX(3deg); }
+.launch-brand h1 i {
+  display: inline-block;
+  margin: 0 .16em;
+  color: #b9db74;
+  font-family: Georgia, serif;
+  font-size: .66em;
+  font-style: normal;
+  text-shadow: 0 0 12px rgba(204, 235, 128, 0.48);
+  vertical-align: .16em;
 }
 .launch-english {
   margin: 12px 0 0;
@@ -677,13 +691,17 @@ body {
   inset: 7px;
   border: 1px dashed rgba(180, 218, 133, 0.5);
 }
-.launch-loader-mark {
+.launch-loader-percent {
   position: relative;
   z-index: 1;
-  width: 35px;
-  height: 45px;
-  object-fit: contain;
-  filter: grayscale(1) brightness(2.1) contrast(.75) drop-shadow(0 0 8px rgba(203, 237, 139, 0.56));
+  min-width: 42px;
+  color: #edf4d5;
+  font-family: "Arial Narrow", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -.04em;
+  text-align: center;
+  text-shadow: 0 0 9px rgba(203, 237, 139, 0.5);
 }
 @keyframes launch-breathe { to { transform: scale(1.065); } }
 @keyframes launch-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
@@ -691,6 +709,6 @@ body {
 
 @media (max-width: 460px) {
   .launch-content { padding: 36px 24px 28px; }
-  .launch-emblem { width: clamp(174px, 53vw, 220px); margin-top: -36px; margin-bottom: -110px; }
-  .launch-brand h1 { font-size: 48px; }
+  .launch-emblem { width: clamp(174px, 53vw, 220px); margin-top: -36px; margin-bottom: 28px; }
+  .launch-brand h1 { font-size: 66px; }
 }
