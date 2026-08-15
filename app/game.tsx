@@ -631,12 +631,6 @@ class TowerPhysicsGame {
   private releaseAdjustedBody() {
     const adjusted = this.adjusting;
     if (!adjusted) return false;
-    if (!this.hasValidStackPosition(adjusted.body.gameItem, adjusted.body.position.x, adjusted.body.position.y, adjusted.body)) {
-      this.adjusting = null;
-      Body.setStatic(adjusted.body, false);
-      this.fail("物件必须放在上一件物品正上方；落到其他位置，挑战失败。");
-      return false;
-    }
     Body.setStatic(adjusted.body, false);
     adjusted.body.isSleeping = false;
     adjusted.body.sleepCounter = 0;
@@ -654,17 +648,12 @@ class TowerPhysicsGame {
     const halfHeight = item.height / 2;
     const dropX = clamp(x, item.width / 2 + 3, WORLD_WIDTH - item.width / 2 - 3);
     const dropY = clamp(y, halfHeight + 8, BASE_Y - halfHeight - 3);
-    if (!this.hasValidStackPosition(item, dropX, dropY)) {
-      this.held = null;
-      this.fail("物件必须落在废料平台或上一件物品正上方；落到其他位置，挑战失败。");
-      return;
-    }
     const body = this.makeBody(item, dropX, dropY, this.held.angle);
     this.dynamicBodies.push(body);
     World.add(this.engine.world, body);
     this.inventory[item.id] -= 1;
     if (this.activeHint?.itemId === item.id) this.activeHint = null;
-    this.message = `「${item.name}」已投入建造区，等待物理结构稳定。`;
+    this.message = `「${item.name}」已投入建造区，物理引擎正在结算受力与重心。`;
     this.held = null;
     this.emit(true);
   }
@@ -723,22 +712,22 @@ class TowerPhysicsGame {
 
   private updateSimulation(delta: number) {
     if (this.status !== "building") return;
-    if (this.dynamicBodies.some((body) => this.isFallen(body))) {
-      this.fail("物件脱离了堆叠结构并掉落，挑战失败。");
+    const nonFirstBodies = this.dynamicBodies.slice(1);
+    const firstBody = this.dynamicBodies[0];
+    if (nonFirstBodies.some((body) => body !== this.adjusting?.body && this.isFallen(body)) || (firstBody && firstBody !== this.adjusting?.body && this.isFallen(firstBody) && this.dynamicBodies.length > 1)) {
+      this.fail("堆叠物脱离场地，塔体已经倒塌。");
+      return;
+    }
+    // This is the only single-piece failure: the first prop may always rest
+    // directly on the ground; every later prop must remain carried by the
+    // structure. We intentionally wait for a real ground contact instead of
+    // failing at pointer release or during a short settling wobble.
+    if (nonFirstBodies.some((body) => body !== this.adjusting?.body && body.bounds.max.y >= BASE_Y - 1)) {
+      this.fail("非首件物品掉落到地面，堆叠失败。");
       return;
     }
     const supportGraph = this.supportGraph();
     const towerBodies = supportGraph.bodies;
-    const unsupportedAtRest = this.dynamicBodies.some((body) =>
-      !supportGraph.depth.has(body)
-      && this.elapsed - (body.gameBornAt ?? this.elapsed) > 850
-      && body.speed < 0.25
-      && Math.abs(body.angularVelocity) < 0.025,
-    );
-    if (unsupportedAtRest) {
-      this.fail("物件没有堆在上一件物品上，挑战失败。");
-      return;
-    }
     if (this.level.wind > 0 && towerBodies.length > 0) {
       const phase = Math.sin(this.elapsed / 850) + Math.sin(this.elapsed / 1600) * 0.55;
       towerBodies.forEach((body) => {
@@ -825,33 +814,6 @@ class TowerPhysicsGame {
       // showing a visible gap between two connected props.
       && verticalGap >= -4
       && verticalGap <= 7;
-  }
-
-  private hasValidStackPosition(item: ItemDefinition | undefined, x: number, y: number, excluded?: TaggedBody) {
-    if (!item) return false;
-    const left = x - item.width / 2;
-    const right = x + item.width / 2;
-    const candidates = this.dynamicBodies.filter((body) => body !== excluded && !this.isFallen(body));
-    const proposedBottom = y + item.height / 2;
-    if (candidates.length === 0) {
-      // The first item is the only exception: it may be placed anywhere on the
-      // ground. Once it exists, every other item must be supported by the stack.
-      if (!excluded) return true;
-      return proposedBottom >= BASE_Y - 8 && proposedBottom <= BASE_Y + 10;
-    }
-    return candidates.some((support) => {
-      const overlap = Math.min(right, support.bounds.max.x) - Math.max(left, support.bounds.min.x);
-      const narrowest = Math.min(item.width, support.bounds.max.x - support.bounds.min.x);
-      // Players release by matching visible outlines, while the physics body
-      // may already overlap its target by a few pixels. Treat that shallow
-      // penetration as a normal landing: Matter resolves it upward on the next
-      // tick. A body beside or below the support still cannot pass.
-      const landingSlack = Math.max(4, Math.min(18, item.height * 0.42));
-      const arrivesFromAbove = y < support.position.y - 2;
-      return arrivesFromAbove
-        && proposedBottom <= support.bounds.min.y + landingSlack
-        && overlap >= Math.max(4, narrowest * 0.35);
-    });
   }
 
   private isFallen(body: Matter.Body) {
