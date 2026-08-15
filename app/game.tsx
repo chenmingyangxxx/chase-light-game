@@ -396,9 +396,9 @@ function initialSnapshot(level: LevelConfig): GameSnapshot {
 }
 
 /**
- * Lightweight procedural sound design. The game only creates an AudioContext
- * after a player gesture, so it works with desktop and mobile autoplay rules
- * without adding a large library of downloaded sound files.
+ * Layered game sound: the login-film score continues as a low-volume musical
+ * bed while procedural ambience and material-aware effects stay responsive to
+ * the physics simulation.
  */
 class GameAudio {
   private context: AudioContext | null = null;
@@ -406,8 +406,8 @@ class GameAudio {
   private effects: GainNode | null = null;
   private ambience: GainNode | null = null;
   private ambientSources: AudioScheduledSourceNode[] = [];
-  private musicTimer: number | null = null;
-  private musicBar = 0;
+  private musicElement: HTMLAudioElement | null = null;
+  private musicFadeTimer: number | null = null;
   private enabled = true;
   private gameplayActive = false;
   private lastImpactAt = 0;
@@ -459,6 +459,18 @@ class GameAudio {
     this.gameplayActive = false;
     this.stopMusic();
     this.stopAmbience();
+  }
+
+  async primeGameplayMusic() {
+    if (!this.enabled) return;
+    const player = this.ensureMusicElement();
+    if (!player || !player.paused) return;
+    player.volume = 0.001;
+    try {
+      await player.play();
+    } catch {
+      // startGameplay retries after the transition if playback was blocked.
+    }
   }
 
   ui() {
@@ -563,48 +575,54 @@ class GameAudio {
   }
 
   private startMusic() {
-    if (!this.enabled || !this.gameplayActive || !this.context || !this.ambience || this.musicTimer !== null) return;
-    const playBar = () => {
-      if (!this.gameplayActive) return;
-      const roots = [73.42, 87.31, 65.41, 98];
-      const root = roots[this.musicBar % roots.length];
-      this.musicBar += 1;
-      this.padNote(root, 4.7, 0.028, 0);
-      this.padNote(root * 1.5, 4.4, 0.014, 0.08);
-      this.padNote(root * 2, 2.1, 0.009, 1.9);
-      this.padNote(root * 2.25, 1.4, 0.007, 3.05);
-    };
-    playBar();
-    this.musicTimer = window.setInterval(playBar, 4600);
+    if (!this.enabled || !this.gameplayActive) return;
+    const player = this.ensureMusicElement();
+    if (!player) return;
+    const revealMusic = () => this.fadeMusicTo(0.32, 1500);
+    if (player.paused) {
+      player.volume = 0.001;
+      void player.play().then(revealMusic).catch(() => undefined);
+    } else {
+      revealMusic();
+    }
   }
 
   private stopMusic() {
-    if (this.musicTimer !== null) window.clearInterval(this.musicTimer);
-    this.musicTimer = null;
-    this.musicBar = 0;
+    if (this.musicFadeTimer !== null) window.clearInterval(this.musicFadeTimer);
+    this.musicFadeTimer = null;
+    if (!this.musicElement) return;
+    this.musicElement.pause();
+    this.musicElement.currentTime = 0;
+    this.musicElement.volume = 0;
   }
 
-  private padNote(frequency: number, duration: number, volume: number, delay: number) {
-    if (!this.context || !this.ambience) return;
-    const context = this.context;
-    const start = context.currentTime + delay;
-    const oscillator = context.createOscillator();
-    const filter = context.createBiquadFilter();
-    const gain = context.createGain();
-    oscillator.type = "triangle";
-    oscillator.frequency.value = frequency;
-    filter.type = "lowpass";
-    filter.frequency.value = 560;
-    filter.Q.value = 0.42;
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(volume, start + 0.65);
-    gain.gain.setValueAtTime(volume, start + Math.max(0.7, duration - 1.15));
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-    oscillator.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.ambience);
-    oscillator.start(start);
-    oscillator.stop(start + duration + 0.04);
+  private ensureMusicElement() {
+    if (this.musicElement) return this.musicElement;
+    if (typeof Audio === "undefined") return null;
+    const player = new Audio("/assets/launch-original-with-music.mp4");
+    player.loop = true;
+    player.preload = "auto";
+    player.volume = 0;
+    player.playsInline = true;
+    this.musicElement = player;
+    return player;
+  }
+
+  private fadeMusicTo(target: number, duration: number) {
+    const player = this.musicElement;
+    if (!player) return;
+    if (this.musicFadeTimer !== null) window.clearInterval(this.musicFadeTimer);
+    const startVolume = player.volume;
+    const steps = Math.max(1, Math.round(duration / 50));
+    let step = 0;
+    this.musicFadeTimer = window.setInterval(() => {
+      step += 1;
+      const progress = smoothStep(step / steps);
+      player.volume = clamp(startVolume + (target - startVolume) * progress, 0, 1);
+      if (step < steps) return;
+      if (this.musicFadeTimer !== null) window.clearInterval(this.musicFadeTimer);
+      this.musicFadeTimer = null;
+    }, 50);
   }
 
   private tone(
@@ -2692,6 +2710,7 @@ export function DawnTowerGame() {
   const startGame = async () => {
     if (launchLeaving) return;
     setLaunchLeaving(true);
+    void audio.primeGameplayMusic();
     try {
       await audio.unlock();
       audio.setEnabled(true);
