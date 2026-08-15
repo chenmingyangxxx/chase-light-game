@@ -29,7 +29,14 @@ const GOAL_REACH_HEIGHT = 99;
 const GOAL_REACH_Y = BASE_Y - GOAL_REACH_HEIGHT * PIXELS_PER_METER;
 const GOAL_BASKET_Y = GOAL_REACH_Y - 86;
 const GOAL_REACH_HALF_WIDTH = 139;
-const ACTIVATION_DURATION = 7600;
+// The climb now takes roughly twice as long as the previous 5.5 second pass;
+// the picking beat remains compact once the robot reaches the basket.
+const ROBOT_CLIMB_DURATION = 11000;
+const ROBOT_PLUCK_DURATION = 2200;
+const ACTIVATION_DURATION = ROBOT_CLIMB_DURATION + ROBOT_PLUCK_DURATION;
+const ROBOT_MASS = 34;
+const ROBOT_CLIMB_HEIGHT = 86;
+const ROBOT_PLUCK_HEIGHT = 91;
 const RECOVERY_Y = BASE_Y + 113;
 const BACKDROP_TOP = 600;
 const BACKDROP_BOTTOM = BASE_Y + 149;
@@ -138,6 +145,12 @@ interface AdjustedBody {
 interface TaggedBody extends Matter.Body {
   gameItem?: ItemDefinition;
   gameBornAt?: number;
+}
+
+interface ClimbPoint {
+  x: number;
+  y: number;
+  support: TaggedBody;
 }
 
 interface GameSnapshot {
@@ -736,9 +749,10 @@ class TowerPhysicsGame {
     const delta = this.lastFrame ? Math.min(33, now - this.lastFrame) : 16.667;
     this.lastFrame = now;
     this.elapsed += delta;
-    if (this.status === "building") {
+    if (this.status === "building" || this.status === "activating") {
       this.accumulator += delta;
       while (this.accumulator >= 16.667) {
+        if (this.status === "activating") this.applyRobotWeight();
         Engine.update(this.engine, 16.667);
         this.accumulator -= 16.667;
       }
@@ -756,19 +770,29 @@ class TowerPhysicsGame {
   };
 
   private updateSimulation(delta: number) {
-    if (this.status !== "building") return;
+    const isClimbing = this.status === "activating";
+    if (this.status !== "building" && !isClimbing) return;
     const nonFirstBodies = this.dynamicBodies.slice(1);
     const firstBody = this.dynamicBodies[0];
-    if (nonFirstBodies.some((body) => body !== this.adjusting?.body && this.isFallen(body)) || (firstBody && firstBody !== this.adjusting?.body && this.isFallen(firstBody) && this.dynamicBodies.length > 1)) {
-      this.fail("堆叠物脱离场地，塔体已经倒塌。");
+    const escapedBody = nonFirstBodies.find((body) => body !== this.adjusting?.body && this.isFallen(body))
+      ?? (firstBody && firstBody !== this.adjusting?.body && this.isFallen(firstBody) && this.dynamicBodies.length > 1 ? firstBody : undefined);
+    if (escapedBody) {
+      const itemName = escapedBody.gameItem?.name ?? "一件废料";
+      this.fail(isClimbing
+        ? `机器人攀爬时，重量压在「${itemName}」附近，塔体侧向失稳并倒塌。把底座加宽、让重心更居中，再试一次，你已经很接近了！`
+        : `「${itemName}」脱离了有效堆叠区域，塔体发生侧翻。先稳住底座再继续向上，你一定可以搭得更牢！`);
       return;
     }
     // This is the only single-piece failure: the first prop may always rest
     // directly on the ground; every later prop must remain carried by the
     // structure. We intentionally wait for a real ground contact instead of
     // failing at pointer release or during a short settling wobble.
-    if (nonFirstBodies.some((body) => body !== this.adjusting?.body && body.bounds.max.y >= BASE_Y - 1)) {
-      this.fail("非首件物品掉落到地面，堆叠失败。");
+    const groundedBody = nonFirstBodies.find((body) => body !== this.adjusting?.body && body.bounds.max.y >= BASE_Y - 1);
+    if (groundedBody) {
+      const itemName = groundedBody.gameItem?.name ?? "一件废料";
+      this.fail(isClimbing
+        ? `机器人经过时，「${itemName}」从支撑面滑落并触地。增大上下物件的接触面后再试，你已经离新芽很近了！`
+        : `「${itemName}」没有被上一件物品承托，掉到了地面。调整落点并扩大接触面，再试一次！`);
       return;
     }
     const supportGraph = this.supportGraph();
@@ -798,11 +822,16 @@ class TowerPhysicsGame {
       && currentHeight < this.stableHeight * 0.63;
     if (meaningfulCollapse) {
       this.collapseElapsed += delta;
-      if (this.collapseElapsed > 720) this.fail();
+      if (this.collapseElapsed > 720) {
+        this.fail(isClimbing
+          ? "机器人向上攀爬时，移动载荷让塔的重心越过了支撑范围，垃圾堆整体倒塌。把较重、较宽的物件放在下方并对齐重心，再挑战一次，你可以做到！"
+          : undefined);
+      }
     } else {
       this.collapseElapsed = 0;
     }
 
+    if (isClimbing) return;
     const hasRealStack = towerBodies.some((body) => (supportGraph.depth.get(body) ?? 0) >= 2);
     if (this.hasReachedBasket(towerBodies, supportGraph.depth) && hasRealStack && stable && this.stableElapsed > 1250) this.activateLight();
   }
@@ -876,6 +905,11 @@ class TowerPhysicsGame {
     if (this.status !== "building") return;
     this.status = "activating";
     this.activationAt = this.elapsed;
+    this.dynamicBodies.forEach((body) => Matter.Sleeping.set(body, false));
+    // Start the cinematic at ground level even if the player was inspecting
+    // the top of the tower, then hand control to the robot-follow camera.
+    this.cameraManualOffsetY = 0;
+    this.cameraOffsetY = VIEW_GROUND_CAMERA;
     this.message = "废料塔已抵达吊篮下沿，攀爬助手开始登塔。";
     this.emit(true);
   }
@@ -888,8 +922,8 @@ class TowerPhysicsGame {
     this.emit(true);
   }
 
-  private fail(reason = "塔身失去支撑并倒塌了。调整底座和重心后再试一次。") {
-    if (this.status !== "building") return;
+  private fail(reason = "塔身失去支撑并整体倒塌。把宽重物件放在底部、让重心保持居中，再试一次，你一定能搭得更稳！") {
+    if (this.status !== "building" && this.status !== "activating") return;
     this.status = "failed";
     this.message = reason;
     this.emit(true);
@@ -935,6 +969,7 @@ class TowerPhysicsGame {
 
   panCamera(screenDeltaY: number) {
     if (!Number.isFinite(screenDeltaY)) return;
+    if (this.status === "activating" || this.status === "cleared") return;
     const rect = this.canvas.getBoundingClientRect();
     const virtualDelta = -screenDeltaY / Math.max(0.1, rect.height / WORLD_HEIGHT);
     const automatic = this.automaticCameraOffset();
@@ -985,7 +1020,9 @@ class TowerPhysicsGame {
     this.updateCamera();
 
     const activating = this.status === "activating" || this.status === "cleared";
-    const illuminate = activating ? clamp((this.elapsed - this.activationAt - 1000) / 2200, 0, 1) : 0;
+    const illuminate = activating
+      ? clamp((this.elapsed - this.activationAt - ROBOT_CLIMB_DURATION - 900) / 1300, 0, 1)
+      : 0;
     this.context.save();
     this.context.translate(0, this.cameraOffsetY);
     this.drawScene(illuminate);
@@ -1001,6 +1038,19 @@ class TowerPhysicsGame {
   }
 
   private automaticCameraOffset() {
+    if (this.status === "activating" || this.status === "cleared") {
+      const route = this.climbRoute();
+      if (route.length >= 2) {
+        const { anchor } = this.robotClimbPose(route);
+        const ascent = clamp((BASE_Y - anchor.y) / (BASE_Y - GOAL_REACH_Y), 0, 1);
+        return clamp(
+          VIEW_GROUND_CAMERA + (MAX_CAMERA_OFFSET - VIEW_GROUND_CAMERA) * smoothStep(ascent),
+          MIN_CAMERA_OFFSET,
+          MAX_CAMERA_OFFSET,
+        );
+      }
+      return VIEW_GROUND_CAMERA;
+    }
     // Follow a growing tower, but preserve the player's manual pan to inspect
     // any section of the complete 0–99 m ruler.
     return clamp(VIEW_GROUND_CAMERA + clamp(this.height, 0, 99) * 2.82, MIN_CAMERA_OFFSET, MAX_CAMERA_OFFSET);
@@ -1327,9 +1377,10 @@ class TowerPhysicsGame {
     ctx.beginPath();
     ctx.arc(basketX + ropeSway, ropeEndY + 3, 4.5, 0, Math.PI * 2);
     ctx.fill();
-    if (collectProgress > 0.48) {
+    const collectStart = ROBOT_CLIMB_DURATION / ACTIVATION_DURATION;
+    if (collectProgress > collectStart) {
       const glow = ctx.createRadialGradient(basketX, basketY - 51, 1, basketX, basketY - 51, 24);
-      glow.addColorStop(0, `rgba(211, 243, 150, ${Math.min(0.35, (collectProgress - 0.48) * 1.1)})`);
+      glow.addColorStop(0, `rgba(211, 243, 150, ${Math.min(0.35, (collectProgress - collectStart) * 2.2)})`);
       glow.addColorStop(1, "rgba(211, 243, 150, 0)");
       ctx.fillStyle = glow;
       ctx.beginPath();
@@ -1354,49 +1405,76 @@ class TowerPhysicsGame {
   private drawSuccessRobot() {
     const basketX = GOAL_BASKET_X;
     const basketY = GOAL_BASKET_Y;
-    const progress = this.activationProgress();
     const route = this.climbRoute();
     if (route.length < 2) return;
-    const smooth = (value: number) => {
-      const t = clamp(value, 0, 1);
-      return t * t * (3 - 2 * t);
-    };
+    const pose = this.robotClimbPose(route);
 
-    // The extracted six-frame climb cycle follows the same support route used
-    // by the physical pile. It is visual-only, so it cannot disturb a tower
-    // that the player has already completed.
-    const climb = smooth((progress - 0.02) / 0.72);
-    const routePosition = climb * (route.length - 1);
-    const routeIndex = Math.min(route.length - 2, Math.max(0, Math.floor(routePosition)));
-    const localStep = routePosition - routeIndex;
-    const from = route[routeIndex] ?? route[0];
-    const to = route[routeIndex + 1] ?? from;
-    const travel = smooth(localStep);
-    const anchor = {
-      x: from.x + (to.x - from.x) * travel,
-      y: from.y + (to.y - from.y) * travel - Math.sin(localStep * Math.PI) * 2.2,
-    };
-    const climbFrame = Math.min(5, Math.floor((routePosition * 0.92) % 6));
-    const transition = smooth((progress - 0.72) / 0.065);
-    this.drawRobotFrame(this.artwork.robotClimb, 6, 1, climbFrame, anchor.x, anchor.y + 7, 66, (1 - transition) * Math.min(1, climb * 5));
+    // The six-frame climb is 30% larger and moves at half the previous speed.
+    // Its contact point is shared with the physical load simulation below.
+    const transition = smoothStep((pose.sequenceElapsed - (ROBOT_CLIMB_DURATION - 500)) / 700);
+    this.drawRobotFrame(
+      this.artwork.robotClimb,
+      6,
+      1,
+      pose.frame,
+      pose.anchor.x,
+      pose.anchor.y + 7,
+      ROBOT_CLIMB_HEIGHT,
+      (1 - transition) * Math.min(1, pose.climb * 5),
+    );
 
     if (transition <= 0) return;
 
     // At the basket the ten-frame picking sequence takes over. The first frame
     // cross-fades with the climb cycle so there is no visual pop between the
     // two independently extracted action strips.
-    const pluckProgress = smooth((progress - 0.75) / 0.235);
+    const pluckProgress = smoothStep((pose.sequenceElapsed - ROBOT_CLIMB_DURATION) / ROBOT_PLUCK_DURATION);
     const pluckFrame = Math.min(9, Math.floor(pluckProgress * 10));
     const finalAnchor = { x: basketX - 30, y: basketY + 31 };
-    this.drawRobotFrame(this.artwork.robotPluck, 5, 2, pluckFrame, finalAnchor.x, finalAnchor.y, 70, transition);
+    this.drawRobotFrame(this.artwork.robotPluck, 5, 2, pluckFrame, finalAnchor.x, finalAnchor.y, ROBOT_PLUCK_HEIGHT, transition);
 
     if (pluckProgress < 0.72) return;
-    const collect = smooth((pluckProgress - 0.72) / 0.28);
+    const collect = smoothStep((pluckProgress - 0.72) / 0.28);
     this.drawCollectedSprout(
       basketX - 5 - collect * 11,
       basketY - 50 + collect * 16,
       0.48 + collect * 0.08,
     );
+  }
+
+  private robotClimbPose(route: ClimbPoint[]) {
+    const sequenceElapsed = Math.max(0, this.elapsed - this.activationAt);
+    const climb = smoothStep((sequenceElapsed - 120) / (ROBOT_CLIMB_DURATION - 120));
+    const routePosition = climb * (route.length - 1);
+    const routeIndex = Math.min(route.length - 2, Math.max(0, Math.floor(routePosition)));
+    const localStep = routePosition - routeIndex;
+    const from = route[routeIndex] ?? route[0];
+    const to = route[routeIndex + 1] ?? from;
+    const travel = smoothStep(localStep);
+    const anchor: ClimbPoint = {
+      x: from.x + (to.x - from.x) * travel,
+      y: from.y + (to.y - from.y) * travel - Math.sin(localStep * Math.PI) * 2.2,
+      support: localStep < 0.52 ? from.support : to.support,
+    };
+    const frame = climb >= 0.995 ? 5 : Math.min(5, Math.floor((routePosition * 0.92) % 6));
+    return { anchor, climb, frame, routePosition, sequenceElapsed };
+  }
+
+  private applyRobotWeight() {
+    const route = this.climbRoute();
+    if (route.length < 2) return;
+    const pose = this.robotClimbPose(route);
+    const support = pose.anchor.support;
+    Matter.Sleeping.set(support, false);
+    const gait = Math.sin(pose.routePosition * Math.PI * 2);
+    const gravityScale = this.engine.gravity.scale || 0.001;
+    const downwardForce = ROBOT_MASS * gravityScale * (1 + Math.abs(gait) * 0.12);
+    const lateralForce = pose.sequenceElapsed < ROBOT_CLIMB_DURATION ? gait * ROBOT_MASS * gravityScale * 0.065 : 0;
+    const contactPoint = {
+      x: clamp(pose.anchor.x, support.bounds.min.x + 2, support.bounds.max.x - 2),
+      y: clamp(pose.anchor.y, support.bounds.min.y + 2, support.bounds.max.y - 2),
+    };
+    Body.applyForce(support, contactPoint, { x: lateralForce, y: downwardForce });
   }
 
   private drawRobotFrame(
@@ -1439,7 +1517,7 @@ class TowerPhysicsGame {
       .filter((body) => body.bounds.max.x >= GOAL_BASKET_X - GOAL_REACH_HALF_WIDTH && body.bounds.min.x <= GOAL_BASKET_X + GOAL_REACH_HALF_WIDTH)
       .sort((a, b) => a.bounds.min.y - b.bounds.min.y);
     let current = candidates[0];
-    if (!current) return [] as Array<{ x: number; y: number }>;
+    if (!current) return [] as ClimbPoint[];
     const chain = [current];
     while ((depth.get(current) ?? 0) > 1) {
       const currentDepth = depth.get(current) ?? 0;
@@ -1451,8 +1529,8 @@ class TowerPhysicsGame {
       current = support;
     }
     const ordered = chain.reverse();
-    const route: Array<{ x: number; y: number }> = [];
-    const appendSegment = (target: { x: number; y: number }) => {
+    const route: ClimbPoint[] = [];
+    const appendSegment = (target: ClimbPoint) => {
       const from = route[route.length - 1];
       if (!from) {
         route.push(target);
@@ -1465,6 +1543,7 @@ class TowerPhysicsGame {
         route.push({
           x: from.x + (target.x - from.x) * amount,
           y: from.y + (target.y - from.y) * amount,
+          support: target.support,
         });
       }
     };
@@ -1481,17 +1560,18 @@ class TowerPhysicsGame {
       );
       const bottomY = Math.min(BASE_Y - 4, body.bounds.max.y - 7);
       const topY = body.bounds.min.y + 6;
-      if (bodyIndex === 0) appendSegment({ x, y: bottomY });
-      else appendSegment({ x, y: Math.min(bottomY, route[route.length - 1].y) });
-      appendSegment({ x, y: topY });
+      if (bodyIndex === 0) appendSegment({ x, y: bottomY, support: body });
+      else appendSegment({ x, y: Math.min(bottomY, route[route.length - 1].y), support: body });
+      appendSegment({ x, y: topY, support: body });
     });
 
     // Once the pile reaches the lower rail, the last few holds belong to the
     // basket frame itself, giving the robot a believable path to the flower.
+    const topSupport = ordered[ordered.length - 1];
     [
-      { x: GOAL_BASKET_X - 44, y: GOAL_REACH_Y - 4 },
-      { x: GOAL_BASKET_X - 42, y: GOAL_BASKET_Y + 58 },
-      { x: GOAL_BASKET_X - 38, y: GOAL_BASKET_Y + 32 },
+      { x: GOAL_BASKET_X - 44, y: GOAL_REACH_Y - 4, support: topSupport },
+      { x: GOAL_BASKET_X - 42, y: GOAL_BASKET_Y + 58, support: topSupport },
+      { x: GOAL_BASKET_X - 38, y: GOAL_BASKET_Y + 32, support: topSupport },
     ].forEach(appendSegment);
     return route;
   }
@@ -1720,6 +1800,11 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function smoothStep(value: number) {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
 function colorMix(from: [number, number, number], to: [number, number, number], amount: number) {
   const mix = (index: number) => Math.round(from[index] + (to[index] - from[index]) * amount);
   return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`;
@@ -1827,7 +1912,7 @@ function GameStage({ level, onExit }: GameStageProps) {
           )}
           {snapshot.status === "activating" && (
             <div className="activation-strip" aria-live="polite">
-              <span>地表复苏中</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
+              <span>机器人攀爬中</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
             </div>
           )}
           <aside className="inventory-panel panel" aria-label="垃圾物品列表">
@@ -1870,8 +1955,8 @@ function GameStage({ level, onExit }: GameStageProps) {
             <div className="modal-scrim result-scrim">
               <div className={`secondary-dialog result-dialog ${snapshot.status}`} role="alertdialog" aria-modal="true" aria-labelledby="result-title">
                 <div className="result-symbol" aria-hidden="true">{snapshot.status === "cleared" ? "✦" : "↯"}</div>
-                <strong id="result-title">{snapshot.status === "cleared" ? "抵达新芽" : "堆叠失败"}</strong>
-                <p>{snapshot.status === "cleared" ? "99 米处的生命正在复苏。" : "物件必须连续堆在上一件物品上。"}</p>
+                <strong id="result-title">{snapshot.status === "cleared" ? "抵达新芽" : "高塔失稳"}</strong>
+                <p>{snapshot.status === "cleared" ? "99 米处的生命正在复苏。" : snapshot.message}</p>
                 <div className="dialog-actions single-action">
                   <button className="dialog-button primary" type="button" onClick={() => {
                     setConfirmation(null);
@@ -2044,10 +2129,11 @@ export function DawnTowerGame() {
                     <li>第一件物品可以直接落在地面；从第二件开始，必须堆放在上一件物品之上。</li>
                     <li>松手后物品会受到重力、碰撞和重心影响；已经放置的物品仍可拖动调整。</li>
                     <li>垃圾堆抵达吊篮下方的 99 米位置并保持稳定后，机器人会开始攀爬。</li>
+                    <li>机器人本身具有重量，攀爬时会把移动载荷传给脚下和手边的废料，因此塔体必须能承受偏心受力。</li>
                   </ol>
                 </article>
                 <aside>
-                  失败条件：非第一件物品掉落到地面，或已经搭建的垃圾堆整体倒塌。仅仅放置在不同位置不会立即失败。
+                  失败条件：非第一件物品掉落到地面，或已经搭建的垃圾堆在建造、攀爬过程中整体倒塌。失败提示会说明具体失稳原因。
                 </aside>
               </div>
 
