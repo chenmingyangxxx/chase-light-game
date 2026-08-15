@@ -29,6 +29,7 @@ const GOAL_REACH_HEIGHT = 99;
 const GOAL_REACH_Y = BASE_Y - GOAL_REACH_HEIGHT * PIXELS_PER_METER;
 const GOAL_BASKET_Y = GOAL_REACH_Y - 86;
 const GOAL_REACH_HALF_WIDTH = 139;
+const ACTIVATION_DURATION = 7600;
 const RECOVERY_Y = BASE_Y + 113;
 const BACKDROP_TOP = 600;
 const BACKDROP_BOTTOM = BASE_Y + 149;
@@ -733,7 +734,7 @@ class TowerPhysicsGame {
       this.accumulator = 0;
     }
     this.updateSimulation(delta);
-    if (this.status === "activating" && this.elapsed - this.activationAt >= 4100) this.finishClear();
+    if (this.status === "activating" && this.elapsed - this.activationAt >= ACTIVATION_DURATION) this.finishClear();
     this.render();
     if (now - this.lastUiUpdate > 110) {
       this.emit();
@@ -932,7 +933,7 @@ class TowerPhysicsGame {
 
   private activationProgress() {
     if (this.status === "building" || this.status === "failed") return 0;
-    return clamp((this.elapsed - this.activationAt) / 4100, 0, 1);
+    return clamp((this.elapsed - this.activationAt) / ACTIVATION_DURATION, 0, 1);
   }
 
   private emit(force = false) {
@@ -1344,52 +1345,124 @@ class TowerPhysicsGame {
     const basketY = GOAL_BASKET_Y;
     const progress = this.activationProgress();
     const route = this.climbRoute();
-    if (route.length === 0) return;
-    const climb = clamp((progress - 0.05) / 0.65, 0, 1);
-    const grab = clamp((progress - 0.72) / 0.2, 0, 1);
+    if (route.length < 2) return;
+    const ease = (value: number) => {
+      const t = clamp(value, 0, 1);
+      return t * t * (3 - 2 * t);
+    };
+    const mixPoint = (
+      from: { x: number; y: number },
+      to: { x: number; y: number },
+      amount: number,
+      lift = 0,
+    ) => ({
+      x: from.x + (to.x - from.x) * amount,
+      y: from.y + (to.y - from.y) * amount - Math.sin(amount * Math.PI) * lift,
+    });
+
+    // Give the climb most of the victory beat. Each short route segment is a
+    // four-part cycle: reach, weight transfer, step, settle. Only one limb is
+    // visibly travelling at a time, preserving a readable three-point hold.
+    const climb = ease((progress - 0.025) / 0.72);
     const routePosition = climb * Math.max(0, route.length - 1);
     const routeIndex = Math.min(route.length - 2, Math.max(0, Math.floor(routePosition)));
-    const step = route.length === 1 ? 1 : routePosition - routeIndex;
+    const step = routePosition - routeIndex;
     const lowerHold = route[routeIndex] ?? route[0];
     const upperHold = route[Math.min(route.length - 1, routeIndex + 1)] ?? lowerHold;
-    const easedStep = step * step * (3 - 2 * step);
-    const anchor = {
-      x: lowerHold.x + (upperHold.x - lowerHold.x) * easedStep,
-      y: lowerHold.y + (upperHold.y - lowerHold.y) * easedStep,
-    };
-    const stride = Math.sin(easedStep * Math.PI);
-    const torso = { x: anchor.x + (upperHold.x - lowerHold.x) * 0.08, y: anchor.y - 30 - stride * 1.7 };
+    const activeRight = routeIndex % 2 === 0;
+    const bodyTravel = ease((step - 0.2) / 0.62);
+    const reachTravel = ease(step / 0.28);
+    const stepTravel = ease((step - 0.45) / 0.32);
+    const supportHandTravel = ease((step - 0.7) / 0.25);
+    const supportFootTravel = ease((step - 0.82) / 0.18);
+
+    const lowerLeftHand = { x: lowerHold.x - 8, y: lowerHold.y - 10 };
+    const lowerRightHand = { x: lowerHold.x + 8, y: lowerHold.y - 10 };
+    const upperLeftHand = { x: upperHold.x - 8, y: upperHold.y - 9 };
+    const upperRightHand = { x: upperHold.x + 8, y: upperHold.y - 9 };
+    const lowerLeftFoot = { x: lowerHold.x - 7, y: lowerHold.y };
+    const lowerRightFoot = { x: lowerHold.x + 7, y: lowerHold.y };
+    const upperLeftFoot = { x: upperHold.x - 7, y: upperHold.y };
+    const upperRightFoot = { x: upperHold.x + 7, y: upperHold.y };
+
+    let leftHand = activeRight
+      ? mixPoint(lowerLeftHand, upperLeftHand, supportHandTravel, 2)
+      : mixPoint(lowerLeftHand, upperLeftHand, reachTravel, 5);
+    let rightHand = activeRight
+      ? mixPoint(lowerRightHand, upperRightHand, reachTravel, 5)
+      : mixPoint(lowerRightHand, upperRightHand, supportHandTravel, 2);
+    let leftFoot = activeRight
+      ? mixPoint(lowerLeftFoot, upperLeftFoot, stepTravel, 7)
+      : mixPoint(lowerLeftFoot, upperLeftFoot, supportFootTravel, 2);
+    let rightFoot = activeRight
+      ? mixPoint(lowerRightFoot, upperRightFoot, supportFootTravel, 2)
+      : mixPoint(lowerRightFoot, upperRightFoot, stepTravel, 7);
+
+    const anchor = mixPoint(lowerHold, upperHold, bodyTravel, 2.2);
+    let torso = { x: anchor.x, y: anchor.y - 29 };
+    const flowerHold = { x: basketX - 5, y: basketY - 50 };
+    const settle = ease((progress - 0.75) / 0.075);
+    const reach = ease((progress - 0.825) / 0.115);
+    const pluck = ease((progress - 0.94) / 0.06);
+
+    // The final basket pose keeps the left hand and both feet planted. The
+    // right arm alone reaches, closes around the stem, then draws it inward.
+    if (settle > 0) {
+      const finalTorso = { x: basketX - 22, y: basketY - 8 };
+      torso = mixPoint(torso, finalTorso, settle);
+      leftFoot = mixPoint(leftFoot, { x: basketX - 35, y: basketY + 27 }, settle);
+      rightFoot = mixPoint(rightFoot, { x: basketX - 12, y: basketY + 27 }, settle);
+      leftHand = mixPoint(leftHand, { x: basketX - 40, y: basketY - 8 }, settle);
+      rightHand = mixPoint(rightHand, { x: basketX - 7, y: basketY - 10 }, settle);
+    }
+    rightHand = mixPoint(rightHand, flowerHold, reach, 3);
+    rightHand = mixPoint(rightHand, { x: torso.x + 7, y: torso.y - 19 }, pluck, 2);
+
     const pelvis = { x: torso.x, y: torso.y + 12 };
     const shoulder = { x: torso.x, y: torso.y - 4 };
-    const leadFoot = {
-      x: lowerHold.x + (upperHold.x - lowerHold.x) * easedStep,
-      y: lowerHold.y + (upperHold.y - lowerHold.y) * easedStep - stride * 7,
-    };
-    const rearFoot = lowerHold;
-    const leftHand = {
-      x: lowerHold.x + (upperHold.x - lowerHold.x) * clamp((easedStep + 0.18) / 0.86, 0, 1),
-      y: lowerHold.y + (upperHold.y - lowerHold.y) * clamp((easedStep + 0.18) / 0.86, 0, 1) - 5,
-    };
-    const flowerHold = { x: basketX - 5, y: basketY - 50 };
-    const rightHand = {
-      x: upperHold.x + (flowerHold.x - upperHold.x) * grab,
-      y: upperHold.y - 5 + (flowerHold.y - (upperHold.y - 5)) * grab,
-    };
+    const joint = (start: { x: number; y: number }, end: { x: number; y: number }, side: number, drop = 0) => ({
+      x: (start.x + end.x) / 2 + side,
+      y: (start.y + end.y) / 2 + drop,
+    });
+    const tangentX = upperHold.x - lowerHold.x;
+    const bodyLean = clamp(tangentX / 95, -0.14, 0.14) + Math.sin(step * Math.PI) * (activeRight ? -0.035 : 0.035);
+    const headTilt = clamp((rightHand.x - torso.x) / 70, -0.22, 0.22) - reach * 0.08;
 
     ctx.save();
     ctx.globalAlpha = Math.min(1, climb * 4.2);
-    // Arms and legs use actual, stable body-top anchors from climbRoute().
-    // The animated helper is deliberately non-colliding so it never injects
-    // force into the validated tower while the victory beat plays.
-    this.drawJointedLimb({ x: pelvis.x - 7, y: pelvis.y + 3 }, { x: pelvis.x - 14 - stride * 4, y: pelvis.y + 14 }, rearFoot);
-    this.drawJointedLimb({ x: pelvis.x + 7, y: pelvis.y + 3 }, { x: pelvis.x + 14 + stride * 4, y: pelvis.y + 13 }, leadFoot);
-    this.drawJointedLimb({ x: shoulder.x - 12, y: shoulder.y }, { x: shoulder.x - 21 - stride * 4, y: shoulder.y - 1 }, leftHand);
-    this.drawJointedLimb({ x: shoulder.x + 12, y: shoulder.y }, { x: shoulder.x + 22 + stride * 4, y: shoulder.y - 8 }, rightHand);
-    this.drawRobotCore(torso, Math.atan2(upperHold.y - lowerHold.y, upperHold.x - lowerHold.x) * 0.09);
+    // The robot is visual-only: its contact points follow the validated support
+    // chain but never add force to the Matter bodies during the victory scene.
+    this.drawJointedLimb(
+      { x: pelvis.x - 7, y: pelvis.y + 2 },
+      joint({ x: pelvis.x - 7, y: pelvis.y + 2 }, leftFoot, -6, 2),
+      leftFoot,
+      "foot",
+    );
+    this.drawJointedLimb(
+      { x: pelvis.x + 7, y: pelvis.y + 2 },
+      joint({ x: pelvis.x + 7, y: pelvis.y + 2 }, rightFoot, 6, 2),
+      rightFoot,
+      "foot",
+    );
+    this.drawJointedLimb(
+      { x: shoulder.x - 12, y: shoulder.y },
+      joint({ x: shoulder.x - 12, y: shoulder.y }, leftHand, -7, -2),
+      leftHand,
+      "hand",
+      0.72,
+    );
+    this.drawJointedLimb(
+      { x: shoulder.x + 12, y: shoulder.y },
+      joint({ x: shoulder.x + 12, y: shoulder.y }, rightHand, 7, -2),
+      rightHand,
+      "hand",
+      clamp((reach - 0.58) / 0.42, 0.08, 1),
+    );
+    this.drawRobotCore(torso, bodyLean, headTilt);
     ctx.restore();
 
-    if (grab <= 0) return;
-    this.drawCollectedSprout(rightHand.x - 1, rightHand.y - 3, 0.72 + grab * 0.16);
+    if (reach < 0.64) return;
+    this.drawCollectedSprout(rightHand.x - 1, rightHand.y - 3, 0.48 + pluck * 0.08);
   }
 
   private climbRoute() {
@@ -1410,95 +1483,224 @@ class TowerPhysicsGame {
       chain.push(support);
       current = support;
     }
-    return chain.reverse().map((body) => ({
-      x: clamp(body.position.x, body.bounds.min.x + 8, body.bounds.max.x - 8),
-      y: body.bounds.min.y + 4,
-    }));
+    const ordered = chain.reverse();
+    const route: Array<{ x: number; y: number }> = [];
+    const appendSegment = (target: { x: number; y: number }) => {
+      const from = route[route.length - 1];
+      if (!from) {
+        route.push(target);
+        return;
+      }
+      const distance = Math.hypot(target.x - from.x, target.y - from.y);
+      const segments = Math.max(1, Math.ceil(distance / 34));
+      for (let index = 1; index <= segments; index += 1) {
+        const amount = index / segments;
+        route.push({
+          x: from.x + (target.x - from.x) * amount,
+          y: from.y + (target.y - from.y) * amount,
+        });
+      }
+    };
+
+    // Follow the left/front edge of every supported body. Breaking tall props
+    // into reachable 34 px holds avoids the old visual of sliding up a cabinet
+    // or container in one impossible stride.
+    ordered.forEach((body, bodyIndex) => {
+      const bodyWidth = body.bounds.max.x - body.bounds.min.x;
+      const x = clamp(
+        body.bounds.min.x + Math.min(18, bodyWidth * 0.28),
+        body.bounds.min.x + 7,
+        body.bounds.max.x - 7,
+      );
+      const bottomY = Math.min(BASE_Y - 4, body.bounds.max.y - 7);
+      const topY = body.bounds.min.y + 6;
+      if (bodyIndex === 0) appendSegment({ x, y: bottomY });
+      else appendSegment({ x, y: Math.min(bottomY, route[route.length - 1].y) });
+      appendSegment({ x, y: topY });
+    });
+
+    // Once the pile reaches the lower rail, the last few holds belong to the
+    // basket frame itself, giving the robot a believable path to the flower.
+    [
+      { x: GOAL_BASKET_X - 44, y: GOAL_REACH_Y - 4 },
+      { x: GOAL_BASKET_X - 42, y: GOAL_BASKET_Y + 58 },
+      { x: GOAL_BASKET_X - 38, y: GOAL_BASKET_Y + 32 },
+    ].forEach(appendSegment);
+    return route;
   }
 
-  private drawJointedLimb(start: { x: number; y: number }, joint: { x: number; y: number }, end: { x: number; y: number }) {
+  private drawJointedLimb(
+    start: { x: number; y: number },
+    joint: { x: number; y: number },
+    end: { x: number; y: number },
+    endType: "hand" | "foot",
+    grip = 0,
+  ) {
     const ctx = this.context;
+    const armor = endType === "hand" ? "#b9b6a8" : "#52605a";
     ctx.lineCap = "round";
-    ctx.strokeStyle = "#151e20";
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(start.x, start.y);
-    ctx.lineTo(joint.x, joint.y);
-    ctx.lineTo(end.x, end.y);
-    ctx.stroke();
-    ctx.strokeStyle = "#64716b";
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    ctx.moveTo(start.x, start.y);
-    ctx.lineTo(joint.x, joint.y);
-    ctx.lineTo(end.x, end.y);
-    ctx.stroke();
-    [start, joint, end].forEach((point, index) => {
-      ctx.fillStyle = index === 2 ? "#9d8a59" : "#263235";
+    const segment = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+      ctx.strokeStyle = "#141d1f";
+      ctx.lineWidth = 8;
       ctx.beginPath();
-      ctx.arc(point.x, point.y, index === 1 ? 4.1 : 3.3, 0, Math.PI * 2);
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+      ctx.strokeStyle = armor;
+      ctx.lineWidth = 4.2;
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(236, 222, 179, 0.3)";
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    };
+    segment(start, joint);
+    segment(joint, end);
+    [start, joint, end].forEach((point, index) => {
+      ctx.fillStyle = index === 2 ? "#393f3d" : "#263235";
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, index === 1 ? 4.6 : 3.5, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = "rgba(222, 206, 145, 0.65)";
-      ctx.lineWidth = 0.9;
+      ctx.strokeStyle = "rgba(221, 180, 91, 0.7)";
+      ctx.lineWidth = 1;
       ctx.stroke();
     });
+
+    const limbAngle = Math.atan2(end.y - joint.y, end.x - joint.x);
+    ctx.save();
+    ctx.translate(end.x, end.y);
+    if (endType === "foot") {
+      ctx.rotate(clamp(limbAngle * 0.12, -0.18, 0.18));
+      ctx.fillStyle = "#1b2425";
+      roundedRect(ctx, -7.5, -2.5, 15, 7, 2.5);
+      ctx.fill();
+      ctx.fillStyle = "#7b806f";
+      roundedRect(ctx, -6, -1.8, 12, 4.2, 1.6);
+      ctx.fill();
+      ctx.fillStyle = "#d39e3c";
+      roundedRect(ctx, 2, -1.2, 3.2, 1.5, 0.7);
+      ctx.fill();
+    } else {
+      ctx.rotate(limbAngle);
+      ctx.fillStyle = "#222c2d";
+      roundedRect(ctx, -3.5, -3, 7, 6, 2);
+      ctx.fill();
+      const opening = 3.2 - clamp(grip, 0, 1) * 2.1;
+      ctx.strokeStyle = "#c7c2ad";
+      ctx.lineWidth = 1.7;
+      ctx.beginPath();
+      ctx.moveTo(2.5, -1.8);
+      ctx.lineTo(6, -opening);
+      ctx.lineTo(7.2, -opening * 0.25);
+      ctx.moveTo(2.5, 1.8);
+      ctx.lineTo(6, opening);
+      ctx.lineTo(7.2, opening * 0.25);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
-  private drawRobotCore(torso: { x: number; y: number }, angle: number) {
+  private drawRobotCore(torso: { x: number; y: number }, bodyAngle: number, headTilt: number) {
     const ctx = this.context;
     ctx.save();
     ctx.translate(torso.x, torso.y);
-    ctx.rotate(angle);
-    ctx.fillStyle = "#26362f";
-    roundedRect(ctx, -18, -10, 10, 28, 4);
+    ctx.rotate(bodyAngle);
+
+    // Boxy utility body, exposed joints and pale armor plates follow the new
+    // reference while staying small enough not to obscure the stacked props.
+    ctx.fillStyle = "#24312f";
+    roundedRect(ctx, -18, -11, 36, 30, 5);
     ctx.fill();
-    ctx.fillStyle = "#59665c";
-    roundedRect(ctx, -13, -10, 26, 27, 5);
-    ctx.fill();
-    ctx.strokeStyle = "#182325";
+    ctx.strokeStyle = "#111a1c";
     ctx.lineWidth = 2;
     ctx.stroke();
-    ctx.fillStyle = "#b9b29a";
-    roundedRect(ctx, -9, -5, 18, 14, 3);
+    ctx.fillStyle = "#526d5f";
+    roundedRect(ctx, -15, -8, 30, 24, 3.5);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(214, 199, 154, 0.45)";
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    ctx.fillStyle = "#bcb9aa";
+    roundedRect(ctx, -8, -6, 16, 15, 2.5);
     ctx.fill();
     ctx.fillStyle = "#2d3839";
-    roundedRect(ctx, -7, -3, 14, 10, 2);
+    roundedRect(ctx, -6.5, -4.5, 13, 10.5, 1.8);
     ctx.fill();
-    ctx.strokeStyle = "#b7cd75";
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = "rgba(223, 208, 164, 0.34)";
+    ctx.lineWidth = 0.8;
     ctx.beginPath();
-    ctx.moveTo(-4, 2);
-    ctx.lineTo(4, 2);
+    ctx.moveTo(0, -4.5);
+    ctx.lineTo(0, 6);
+    ctx.moveTo(-14, 3);
+    ctx.lineTo(-9, 3);
     ctx.stroke();
-    ctx.fillStyle = "#c2b99d";
-    roundedRect(ctx, -16, -29, 32, 17, 5);
-    ctx.fill();
-    ctx.strokeStyle = "#1b2627";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = "#253033";
-    roundedRect(ctx, -11, -25, 22, 9, 3);
-    ctx.fill();
-    [-5, 5].forEach((eyeX) => {
-      ctx.fillStyle = "#ecbf5b";
+    [-12, -12, -12].forEach((indicatorX, index) => {
+      ctx.fillStyle = index < 2 ? "#e4ad42" : "#9f7835";
       ctx.beginPath();
-      ctx.arc(eyeX, -20.5, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff2a5";
-      ctx.beginPath();
-      ctx.arc(eyeX - 0.5, -21.2, 0.7, 0, Math.PI * 2);
+      ctx.arc(indicatorX, -3 + index * 4, 1.25, 0, Math.PI * 2);
       ctx.fill();
     });
-    ctx.strokeStyle = "#4d5c56";
-    ctx.lineWidth = 1.5;
+
+    ctx.strokeStyle = "#1b2526";
+    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(-8, -29);
-    ctx.lineTo(-12, -37);
+    ctx.moveTo(-8, -11);
+    ctx.lineTo(-8, -15);
+    ctx.lineTo(8, -15);
+    ctx.lineTo(8, -11);
     ctx.stroke();
-    ctx.fillStyle = "#d7a94f";
-    ctx.beginPath();
-    ctx.arc(-12, -38, 1.8, 0, Math.PI * 2);
+
+    ctx.fillStyle = "#182224";
+    [-8, 8].forEach((hipX) => {
+      ctx.beginPath();
+      ctx.arc(hipX, 18, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#b17f3d";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+
+    ctx.save();
+    ctx.translate(0, -22);
+    ctx.rotate(headTilt);
+    ctx.fillStyle = "#202b2d";
+    roundedRect(ctx, -18, -9, 36, 18, 5);
     ctx.fill();
+    ctx.strokeStyle = "#11191b";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#bbb9ae";
+    roundedRect(ctx, -12.5, -6, 25, 12, 3.5);
+    ctx.fill();
+    [-5.5, 5.5].forEach((eyeX) => {
+      ctx.fillStyle = "#303a3b";
+      ctx.beginPath();
+      ctx.arc(eyeX, 0, 3.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#efba50";
+      ctx.beginPath();
+      ctx.arc(eyeX, 0, 2.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fff2a8";
+      ctx.beginPath();
+      ctx.arc(eyeX - 0.6, -0.7, 0.65, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.strokeStyle = "#475450";
+    ctx.lineWidth = 1.3;
+    [-10, 10].forEach((antennaX, index) => {
+      ctx.beginPath();
+      ctx.moveTo(antennaX, -8);
+      ctx.lineTo(antennaX + (index === 0 ? -2 : 2), -16);
+      ctx.stroke();
+      ctx.fillStyle = "#d79f3f";
+      ctx.beginPath();
+      ctx.arc(antennaX + (index === 0 ? -2 : 2), -17, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
     ctx.restore();
   }
 
