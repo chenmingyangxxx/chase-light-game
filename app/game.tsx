@@ -199,75 +199,75 @@ const ITEM_ICON_ART: Record<ItemId, IconSprite> = {
 
 const ITEMS: Record<ItemId, ItemDefinition> = {
   pallet: {
-    id: "pallet", name: "木托盘", shortName: "托", role: "foundation", shape: "box", width: 60, height: 48,
+    id: "pallet", name: "木托盘", shortName: "托", role: "foundation", shape: "box", width: 112, height: 84,
     density: 0.0022, friction: 0.88, frictionStatic: 1.05, restitution: 0.01, color: "#9b6b45", accent: "#d3a271", trait: "宽 · 稳",
   },
   slab: {
-    id: "slab", name: "混凝土板", shortName: "板", role: "foundation", shape: "box", width: 64, height: 52,
+    id: "slab", name: "混凝土板", shortName: "板", role: "foundation", shape: "box", width: 120, height: 96,
     density: 0.0044, friction: 0.94, frictionStatic: 1.2, restitution: 0.005, color: "#66747a", accent: "#9ba9a9", trait: "极重 · 防滑",
   },
   container: {
-    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 68, height: 72,
+    id: "container", name: "旧集装箱", shortName: "箱", role: "foundation", shape: "box", width: 148, height: 156,
     density: 0.0033, friction: 0.78, frictionStatic: 0.96, restitution: 0.01, color: "#536f74", accent: "#a2b8a7", trait: "重 · 可堆高",
   },
   car: {
-    id: "car", name: "报废车壳", shortName: "车", role: "foundation", shape: "box", width: 122, height: 52,
+    id: "car", name: "报废车壳", shortName: "车", role: "foundation", shape: "box", width: 246, height: 104,
     density: 0.0048, friction: 0.74, frictionStatic: 0.9, restitution: 0.02, color: "#785751", accent: "#c18c68", trait: "宽 · 压重",
   },
   cabinet: {
-    id: "cabinet", name: "铁皮柜", shortName: "柜", role: "tall", shape: "box", width: 38, height: 76,
+    id: "cabinet", name: "铁皮柜", shortName: "柜", role: "tall", shape: "box", width: 72, height: 142,
     density: 0.0031, friction: 0.73, frictionStatic: 0.9, restitution: 0.02, color: "#6c7c65", accent: "#b9c697", trait: "高 · 偏重",
   },
   sofa: {
-    id: "sofa", name: "旧沙发", shortName: "沙", role: "foundation", shape: "box", width: 84, height: 50,
+    id: "sofa", name: "旧沙发", shortName: "沙", role: "foundation", shape: "box", width: 156, height: 92,
     density: 0.0028, friction: 0.85, frictionStatic: 1.05, restitution: 0.02, color: "#75554c", accent: "#ca9880", trait: "宽 · 高摩擦",
   },
   beam: {
-    id: "beam", name: "废旧钢梁", shortName: "梁", role: "bridge", shape: "box", width: 124, height: 34,
+    id: "beam", name: "废旧钢梁", shortName: "梁", role: "bridge", shape: "box", width: 226, height: 60,
     density: 0.0032, friction: 0.8, frictionStatic: 0.98, restitution: 0.01, color: "#7e8382", accent: "#d1c9a8", trait: "长 · 可桥接",
   },
   ladder: {
-    id: "ladder", name: "金属梯", shortName: "梯", role: "tall", shape: "box", width: 32, height: 120,
+    id: "ladder", name: "金属梯", shortName: "梯", role: "tall", shape: "box", width: 58, height: 218,
     density: 0.0019, friction: 0.63, frictionStatic: 0.75, restitution: 0.03, color: "#8b9d87", accent: "#d6dfba", trait: "轻 · 易翘",
   },
   pipes: {
-    id: "pipes", name: "管束", shortName: "管", role: "bridge", shape: "box", width: 100, height: 50,
+    id: "pipes", name: "管束", shortName: "管", role: "bridge", shape: "box", width: 184, height: 90,
     density: 0.0029, friction: 0.58, frictionStatic: 0.7, restitution: 0.04, color: "#647a82", accent: "#b1c2c6", trait: "长 · 易滑",
   },
   crate: {
-    id: "crate", name: "回收箱", shortName: "箱", role: "block", shape: "box", width: 50, height: 40,
+    id: "crate", name: "回收箱", shortName: "箱", role: "block", shape: "box", width: 92, height: 74,
     density: 0.0025, friction: 0.81, frictionStatic: 0.98, restitution: 0.015, color: "#b7784f", accent: "#e2ae70", trait: "规则 · 易堆",
   },
   fridge: {
-    id: "fridge", name: "旧冰箱", shortName: "冰", role: "tall", shape: "box", width: 38, height: 70,
+    id: "fridge", name: "旧冰箱", shortName: "冰", role: "tall", shape: "box", width: 72, height: 132,
     density: 0.0038, friction: 0.74, frictionStatic: 0.88, restitution: 0.01, color: "#7790a0", accent: "#d6e0d5", trait: "高 · 可封顶",
   },
   washer: {
-    id: "washer", name: "洗衣机", shortName: "洗", role: "block", shape: "box", width: 38, height: 52,
+    id: "washer", name: "洗衣机", shortName: "洗", role: "block", shape: "box", width: 74, height: 98,
     density: 0.0034, friction: 0.76, frictionStatic: 0.93, restitution: 0.01, color: "#8e9e9a", accent: "#cbd6cd", trait: "方正 · 压重",
   },
   computer: {
-    id: "computer", name: "破旧显示器", shortName: "屏", role: "block", shape: "box", width: 48, height: 38,
+    id: "computer", name: "破旧显示器", shortName: "屏", role: "block", shape: "box", width: 88, height: 70,
     density: 0.0018, friction: 0.64, frictionStatic: 0.74, restitution: 0.04, color: "#57636b", accent: "#9daeb5", trait: "宽 · 填缝",
   },
   scaffold: {
-    id: "scaffold", name: "脚手架", shortName: "架", role: "tall", shape: "box", width: 54, height: 78,
+    id: "scaffold", name: "脚手架", shortName: "架", role: "tall", shape: "box", width: 100, height: 144,
     density: 0.0022, friction: 0.68, frictionStatic: 0.81, restitution: 0.02, color: "#76866c", accent: "#d6cc88", trait: "很高 · 须居中",
   },
   barrel: {
-    id: "barrel", name: "旧油桶", shortName: "桶", role: "risky", shape: "box", width: 38, height: 56,
+    id: "barrel", name: "旧油桶", shortName: "桶", role: "risky", shape: "box", width: 72, height: 104,
     density: 0.0024, friction: 0.48, frictionStatic: 0.58, restitution: 0.07, color: "#a37445", accent: "#edc161", trait: "高 · 易倒",
   },
   tire: {
-    id: "tire", name: "轮胎", shortName: "胎", role: "risky", shape: "circle", width: 44, height: 44,
+    id: "tire", name: "轮胎", shortName: "胎", role: "risky", shape: "circle", width: 82, height: 82,
     density: 0.0027, friction: 0.54, frictionStatic: 0.68, restitution: 0.2, color: "#333b3a", accent: "#9fa78c", trait: "弹性 · 可配重",
   },
   bicycle: {
-    id: "bicycle", name: "旧自行车", shortName: "车", role: "risky", shape: "box", width: 92, height: 56,
+    id: "bicycle", name: "旧自行车", shortName: "车", role: "risky", shape: "box", width: 170, height: 104,
     density: 0.0013, friction: 0.34, frictionStatic: 0.42, restitution: 0.08, color: "#6e7e5f", accent: "#d2b86a", trait: "轻 · 难稳定",
   },
   chair: {
-    id: "chair", name: "办公椅", shortName: "椅", role: "risky", shape: "box", width: 44, height: 68,
+    id: "chair", name: "办公椅", shortName: "椅", role: "risky", shape: "box", width: 82, height: 126,
     density: 0.0016, friction: 0.4, frictionStatic: 0.52, restitution: 0.05, color: "#745f56", accent: "#c5a477", trait: "偏心 · 易倒",
   },
 };
@@ -367,8 +367,8 @@ class TowerPhysicsGame {
     this.inventory = inventoryFor(level);
     this.engine = this.createEngine();
     this.artwork = {
-      polluted: this.loadArtwork("/assets/wasteland-master-polluted-hd-v3.png"),
-      revived: this.loadArtwork("/assets/wasteland-master-revived-hd-v3.png"),
+      polluted: this.loadArtwork("/assets/wasteland-master-polluted-distant-hd-v4.png"),
+      revived: this.loadArtwork("/assets/wasteland-master-revived-distant-hd-v4.png"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
       junk: this.loadArtwork("/assets/front-prop-atlas-v2.png"),
