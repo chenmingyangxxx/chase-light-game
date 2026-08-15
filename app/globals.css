@@ -578,38 +578,16 @@ body {
   object-fit: contain;
   filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.42)) drop-shadow(0 0 18px rgba(181, 230, 105, 0.2));
 }
-.launch-kicker {
-  margin: 0 0 11px;
-  color: rgba(226, 244, 201, 0.9);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: .2em;
-  text-indent: .2em;
-}
 .launch-brand h1 {
   margin: 0;
   color: #f1f3dd;
-  font-family: "STXingkai", "FZShuTi", "STKaiti", "KaiTi", serif;
-  font-size: clamp(62px, 12vw, 92px);
+  font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif;
+  font-size: clamp(58px, 10vw, 78px);
   font-weight: 700;
-  letter-spacing: .04em;
-  line-height: .88;
-  text-shadow: 0 1px 0 rgba(255, 255, 235, 0.24), 1px 2px 0 rgba(132, 147, 112, 0.34), 0 7px 24px rgba(0, 0, 0, 0.5);
-}
-.launch-brand h1 span {
-  display: inline-block;
-  transform: skewX(-4deg);
-}
-.launch-brand h1 span:last-child { transform: translateY(2px) skewX(3deg); }
-.launch-brand h1 i {
-  display: inline-block;
-  margin: 0 .16em;
-  color: #b9db74;
-  font-family: Georgia, serif;
-  font-size: .66em;
-  font-style: normal;
-  text-shadow: 0 0 12px rgba(204, 235, 128, 0.48);
-  vertical-align: .16em;
+  letter-spacing: .18em;
+  line-height: 1;
+  text-indent: .18em;
+  text-shadow: 0 1px 0 rgba(255, 255, 235, 0.3), 1px 2px 0 rgba(132, 147, 112, 0.25), 0 7px 22px rgba(0, 0, 0, 0.48);
 }
 .launch-english {
   margin: 12px 0 0;
@@ -618,12 +596,6 @@ body {
   font-weight: 700;
   letter-spacing: .2em;
   text-indent: .2em;
-}
-.launch-tagline {
-  margin: 20px 0 0;
-  color: rgba(225, 235, 220, 0.82);
-  font-size: 13px;
-  letter-spacing: .06em;
 }
 .launch-actions {
   width: min(100%, 330px);
@@ -710,5 +682,5 @@ body {
 @media (max-width: 460px) {
   .launch-content { padding: 36px 24px 28px; }
   .launch-emblem { width: clamp(174px, 53vw, 220px); margin-top: -36px; margin-bottom: 28px; }
-  .launch-brand h1 { font-size: 66px; }
+  .launch-brand h1 { font-size: 62px; }
 }

@@ -19,8 +19,8 @@ test("server-renders the Chase Light launch screen", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>追·光｜物理堆叠小游戏<\/title>/);
-  assert.match(html, /追·光/);
+  assert.match(html, /<title>追光｜物理堆叠小游戏<\/title>/);
+  assert.match(html, /追光/);
   assert.match(html, /class="launch-screen"/);
   assert.match(html, /pursue-light-hook-logo\.png/);
   assert.match(html, /aria-label="正在载入游戏 8%"/);
