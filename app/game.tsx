@@ -30,9 +30,10 @@ const GOAL_REACH_Y = BASE_Y - GOAL_REACH_HEIGHT * PIXELS_PER_METER;
 const GOAL_BASKET_Y = GOAL_REACH_Y - 86;
 const GOAL_RIG_TOP_Y = GOAL_BASKET_Y - 180;
 const GOAL_REACH_HALF_WIDTH = 139;
-// The climb now takes roughly twice as long as the previous 5.5 second pass;
-// the picking beat remains compact once the robot reaches the basket.
-const ROBOT_CLIMB_DURATION = 11000;
+// The deliberate 22 second ascent is 50% slower than the previous version.
+// Short grip holds inside each step keep the reduced speed feeling purposeful
+// instead of like a uniformly slowed video.
+const ROBOT_CLIMB_DURATION = 22000;
 const ROBOT_PLUCK_DURATION = 2200;
 const ACTIVATION_DURATION = ROBOT_CLIMB_DURATION + ROBOT_PLUCK_DURATION;
 const ROBOT_CLIMB_HEIGHT = 86;
@@ -810,6 +811,10 @@ class TowerPhysicsGame {
     const delta = this.lastFrame ? Math.min(33, now - this.lastFrame) : 16.667;
     this.lastFrame = now;
     this.elapsed += delta;
+    // Reaching 99 m locks victory before another physics step can turn a valid
+    // arrival into a loss. Any collapse before this exact height still fails in
+    // updateSimulation below.
+    if (this.status === "activating" && this.robotHasReachedGoal()) this.finishClear();
     if (this.status === "building" || this.status === "activating") {
       this.accumulator += delta;
       while (this.accumulator >= 16.667) {
@@ -821,7 +826,6 @@ class TowerPhysicsGame {
       this.accumulator = 0;
     }
     this.updateSimulation(delta);
-    if (this.status === "activating" && this.elapsed - this.activationAt >= ACTIVATION_DURATION) this.finishClear();
     this.render();
     if (now - this.lastUiUpdate > 110) {
       this.emit();
@@ -1087,9 +1091,16 @@ class TowerPhysicsGame {
   private finishClear() {
     if (this.status !== "activating") return;
     this.status = "cleared";
-    this.message = this.level.id === 10 ? "最后一座高塔达成，废土迎来了黎明。" : "攀爬助手已摘下新芽，土地正在恢复生机。";
+    this.message = "攀爬助手已抵达 99 米，胜利已经锁定。";
     this.onClear();
     this.emit(true);
+  }
+
+  private robotHasReachedGoal() {
+    if (this.status !== "activating") return false;
+    const route = this.climbRoute();
+    if (route.length < 2) return false;
+    return this.robotClimbPose(route).anchor.y <= GOAL_REACH_Y;
   }
 
   private fail(reason = "塔身失去支撑并整体倒塌。把宽重物件放在底部、让重心保持居中，再试一次，你一定能搭得更稳！") {
@@ -1150,7 +1161,10 @@ class TowerPhysicsGame {
 
   private activationProgress() {
     if (this.status === "building" || this.status === "failed") return 0;
-    return clamp((this.elapsed - this.activationAt) / ACTIVATION_DURATION, 0, 1);
+    const route = this.climbRoute();
+    if (route.length < 2) return 0;
+    const { anchor } = this.robotClimbPose(route);
+    return clamp((BASE_Y - anchor.y) / (BASE_Y - GOAL_REACH_Y), 0, 1);
   }
 
   private emit(force = false) {
@@ -1588,8 +1602,8 @@ class TowerPhysicsGame {
     if (route.length < 2) return;
     const pose = this.robotClimbPose(route);
 
-    // The six-frame climb is 30% larger and moves at half the previous speed.
-    // Its contact point is shared with the physical load simulation below.
+    // The six-frame climb is 30% larger, with each reach/pull beat tied to a
+    // physical route segment and shared with the load simulation below.
     const transition = smoothStep((pose.sequenceElapsed - (ROBOT_CLIMB_DURATION - 500)) / 700);
     this.drawRobotFrame(
       this.artwork.robotClimb,
@@ -1623,19 +1637,28 @@ class TowerPhysicsGame {
 
   private robotClimbPose(route: ClimbPoint[]) {
     const sequenceElapsed = Math.max(0, this.elapsed - this.activationAt);
-    const climb = smoothStep((sequenceElapsed - 120) / (ROBOT_CLIMB_DURATION - 120));
+    const climb = smoothStep((sequenceElapsed - 260) / (ROBOT_CLIMB_DURATION - 520));
     const routePosition = climb * (route.length - 1);
     const routeIndex = Math.min(route.length - 2, Math.max(0, Math.floor(routePosition)));
     const localStep = routePosition - routeIndex;
     const from = route[routeIndex] ?? route[0];
     const to = route[routeIndex + 1] ?? from;
-    const travel = smoothStep(localStep);
+    // Hold the current grip briefly, pull through the middle of the motion,
+    // then settle both feet before starting the next reach. This removes the
+    // old constant-rate floating sensation at the slower climb speed.
+    const actionStep = clamp((localStep - 0.12) / 0.76, 0, 1);
+    const travel = smoothStep(actionStep);
     const anchor: ClimbPoint = {
       x: from.x + (to.x - from.x) * travel,
-      y: from.y + (to.y - from.y) * travel - Math.sin(localStep * Math.PI) * 2.2,
+      y: from.y + (to.y - from.y) * travel - Math.sin(actionStep * Math.PI) * 3.4,
       support: localStep < 0.52 ? from.support : to.support,
     };
-    const frame = climb >= 0.995 ? 5 : Math.min(5, Math.floor((routePosition * 0.92) % 6));
+    const frameProgress = clamp((localStep - 0.05) / 0.9, 0, 0.999);
+    const frame = climb >= 0.995
+      ? 5
+      : routeIndex === 0
+        ? Math.min(5, Math.floor(frameProgress * 6))
+        : 2 + Math.min(3, Math.floor(frameProgress * 4));
     return { anchor, climb, frame, routePosition, sequenceElapsed };
   }
 
@@ -2391,10 +2414,11 @@ export function DawnTowerGame() {
                     <li>持续超出承重上限时，物件会先弯折、压瘪或开裂，随后摩擦与稳定性下降，并可能引发整体垮塌。</li>
                     <li>垃圾堆抵达吊篮下方的 99 米位置并保持稳定后，机器人会开始攀爬。</li>
                     <li>机器人本身具有重量，攀爬时会把移动载荷传给脚下和手边的废料，因此塔体必须能承受偏心受力。</li>
+                    <li>机器人抵达 99 米即锁定胜利；此后塔体即使继续晃动或倒塌，也不会改变通关结果。</li>
                   </ol>
                 </article>
                 <aside>
-                  失败条件：非第一件物品掉落到地面，或已经搭建的垃圾堆在建造、攀爬过程中整体倒塌。失败提示会说明具体失稳原因。
+                  失败条件：机器人抵达 99 米之前，非第一件物品掉落到地面，或垃圾堆在建造、攀爬过程中整体倒塌。失败提示会说明具体失稳原因。
                 </aside>
               </div>
 
