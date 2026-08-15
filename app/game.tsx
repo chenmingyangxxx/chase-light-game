@@ -1947,7 +1947,18 @@ export function DawnTowerGame() {
     const ready = loading >= 100;
     return (
       <main className="launch-screen" aria-labelledby="launch-title">
-        <div className="launch-art" aria-hidden="true" />
+        <video
+          className="launch-art"
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          poster="/assets/startup-wasteland-sprout.png"
+          aria-hidden="true"
+        >
+          <source src="/assets/launch-background-pingpong.mp4" type="video/mp4" />
+        </video>
         <div className="launch-shade" aria-hidden="true" />
         {!ready && (
           <div className="launch-loader" role="status" aria-label={`正在载入游戏 ${loading}%`}>

@@ -596,9 +596,12 @@ body {
   position: absolute;
   z-index: -2;
   inset: 0;
-  background: url("/assets/startup-wasteland-sprout.png") center 35% / cover no-repeat;
-  transform: scale(1.025);
-  animation: launch-breathe 14s ease-in-out infinite alternate;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+  background: #091416 url("/assets/startup-wasteland-sprout.png") center 35% / cover no-repeat;
+  pointer-events: none;
 }
 .launch-shade {
   position: absolute;
@@ -750,7 +753,6 @@ body {
   text-align: center;
   text-shadow: 0 0 9px rgba(203, 237, 139, 0.5);
 }
-@keyframes launch-breathe { to { transform: scale(1.065); } }
 @keyframes launch-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes launch-spin { to { transform: rotate(360deg); } }
 
