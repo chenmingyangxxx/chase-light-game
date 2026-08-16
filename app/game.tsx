@@ -776,6 +776,7 @@ class TowerPhysicsGame {
     | "risky"
     | "debris"
     | "goal"
+    | "goalEmpty"
     | "monitor"
     | "robotClimb"
     | "robotPluck",
@@ -811,6 +812,7 @@ class TowerPhysicsGame {
       monitor: this.loadArtwork("/assets/worn-monitor.png"),
       debris: this.loadArtwork("/assets/ground-debris-foreground.png"),
       goal: this.loadArtwork("/assets/crane-basket-sprout.png"),
+      goalEmpty: this.loadArtwork("/assets/crane-basket-soil-empty.png"),
       robotClimb: this.loadArtwork("/assets/robot-climb-frames-v2.png"),
       robotPluck: this.loadArtwork("/assets/robot-pluck-grid-v3.png"),
     };
@@ -1952,40 +1954,14 @@ class TowerPhysicsGame {
     ctx.stroke();
     if (this.imageReady(this.artwork.goal)) {
       ctx.drawImage(this.artwork.goal, basketX - 77, basketY - 86, 154, 172);
-      if (pluckProgress >= 0.58) {
-        // The source basket has its flower baked into the photograph. Once the
-        // hand closes, replace that small centre area with matching soil and
-        // mesh so the same flower can travel with the robot instead of being
-        // visibly duplicated in the basket.
-        const removal = smoothStep((pluckProgress - 0.58) / 0.1);
+      if (pluckProgress >= 0.58 && this.imageReady(this.artwork.goalEmpty)) {
+        // Cross-fade to the matching post-pluck photograph. The previous
+        // programme-drawn rectangle read as a black block because its flat
+        // gradient and mesh could not match the basket's real perspective.
+        const removal = smoothStep((pluckProgress - 0.58) / 0.12);
         ctx.save();
         ctx.globalAlpha = removal;
-        const basketPatch = ctx.createLinearGradient(0, basketY + 7, 0, basketY + 54);
-        basketPatch.addColorStop(0, "rgba(47, 39, 28, 0.98)");
-        basketPatch.addColorStop(1, "rgba(39, 27, 17, 0.99)");
-        ctx.fillStyle = basketPatch;
-        ctx.fillRect(basketX - 22, basketY + 7, 44, 48);
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(basketX - 22, basketY + 7, 44, 48);
-        ctx.clip();
-        ctx.strokeStyle = "rgba(117, 101, 73, 0.52)";
-        ctx.lineWidth = 0.8;
-        for (let line = -42; line <= 42; line += 12) {
-          ctx.beginPath();
-          ctx.moveTo(basketX + line, basketY + 6);
-          ctx.lineTo(basketX + line + 42, basketY + 56);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(basketX + line + 42, basketY + 6);
-          ctx.lineTo(basketX + line, basketY + 56);
-          ctx.stroke();
-        }
-        ctx.restore();
-        ctx.fillStyle = "rgba(57, 39, 20, 0.98)";
-        ctx.beginPath();
-        ctx.ellipse(basketX, basketY + 48, 22, 7, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.drawImage(this.artwork.goalEmpty, basketX - 77, basketY - 86, 154, 172);
         ctx.restore();
       }
     } else {
