@@ -966,7 +966,7 @@ class TowerPhysicsGame {
     this.artwork = {
       // These two complete-width paintings are the canonical gameplay pair.
       // Cover cropping adapts them to phone and desktop without stretching.
-      polluted: this.loadArtwork("/assets/wasteland-gameplay-polluted-full-v8.png"),
+      polluted: this.loadArtwork("/assets/wasteland-gameplay-polluted-full-v7.png"),
       revived: this.loadArtwork("/assets/wasteland-gameplay-revived-full-v7.png"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
@@ -4104,7 +4104,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
   const [endingPhase, setEndingPhase] = useState<EndingPhase>("video");
-  const [endingNeedsGesture, setEndingNeedsGesture] = useState(false);
+  const [, setEndingNeedsGesture] = useState(false);
   const [endingReady, setEndingReady] = useState(false);
   const [endingLeaving, setEndingLeaving] = useState(false);
 
@@ -4200,35 +4200,6 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
       epilogueMusicFadeRef.current = null;
     };
   }, [endingPhase, endingPlaying]);
-
-  const retryEndingPlayback = () => {
-    setEndingNeedsGesture(false);
-    if (endingPhase === "epilogue") {
-      const videoPlayback = epilogueVideoRef.current?.play();
-      const soundtrack = epilogueMusicRef.current;
-      const soundtrackPlayback = soundtrack?.play();
-      const attempts = [videoPlayback, soundtrackPlayback].filter((attempt): attempt is Promise<void> => Boolean(attempt));
-      void Promise.all(attempts)
-        .then(() => {
-          if (!soundtrack) return;
-          epilogueMusicFadeRef.current?.();
-          epilogueMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.68, 900);
-        })
-        .catch(() => setEndingNeedsGesture(true));
-      return;
-    }
-    const videoPlayback = endingVideoRef.current?.play();
-    const soundtrack = endingMusicRef.current;
-    const soundtrackPlayback = soundtrack?.play();
-    const attempts = [videoPlayback, soundtrackPlayback].filter((attempt): attempt is Promise<void> => Boolean(attempt));
-    void Promise.all(attempts)
-      .then(() => {
-        if (!soundtrack) return;
-        endingMusicFadeRef.current?.();
-        endingMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.72, 900);
-      })
-      .catch(() => setEndingNeedsGesture(true));
-  };
 
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
@@ -4440,22 +4411,13 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               >
                 <source src="/assets/ending-epilogue-pingpong-v1.mp4" type="video/mp4" />
               </video>
-              {endingNeedsGesture && (endingPhase === "video" || endingPhase === "epilogue") && (
-                <button
-                  className="ending-play-button"
-                  type="button"
-                  onClick={retryEndingPlayback}
-                >
-                  播放结局与音乐
-                </button>
-              )}
               {endingPhase === "epilogue" && (
                 <>
                   <div className="ending-wordmark" aria-label="追光">
                     <img src="/assets/chase-light-brush-wordmark.png" alt="追光" />
                     <p>以心筑塔，向光而生</p>
                     <div className="ending-music-playing" role="status" aria-label="音乐播放中">
-                      <span aria-hidden="true" />
+                      <img src="/assets/ending-music-spinner-v1.png" alt="" aria-hidden="true" />
                     </div>
                   </div>
                   <button
