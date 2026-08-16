@@ -814,8 +814,8 @@ class TowerPhysicsGame {
       monitor: this.loadArtwork("/assets/worn-monitor.png"),
       debris: this.loadArtwork("/assets/ground-debris-foreground.png"),
       craneBoom: this.loadArtwork("/assets/crane-boom-cast-iron-v1.png"),
-      goal: this.loadArtwork("/assets/crane-basket-sprout-v2.png"),
-      goalEmpty: this.loadArtwork("/assets/crane-basket-soil-empty-v2.png"),
+      goal: this.loadArtwork("/assets/crane-basket-sprout-v3.png"),
+      goalEmpty: this.loadArtwork("/assets/crane-basket-soil-empty-v3.png"),
       robotClimb: this.loadArtwork("/assets/robot-climb-frames-v2.png"),
       robotPluck: this.loadArtwork("/assets/robot-pluck-grid-v4.png"),
     };
@@ -1941,10 +1941,10 @@ class TowerPhysicsGame {
       const sourceEndX = 1710;
       const sourceEndWidth = boomArtwork.naturalWidth - sourceEndX;
       const sourceEndHeight = boomArtwork.naturalHeight;
-      // The basket's legacy top crop started midway through a pulley. The
-      // cleaned basket removes that fragment, and this cast-iron shackle now
-      // overlaps the complete hook far enough to form one continuous joint.
-      const connectionOverlap = 14;
+      // The replacement basket includes its complete upper wheel and hook.
+      // Keep only a short underlap here; the basket is drawn afterward so that
+      // its intact suspension hardware cleanly caps the boom connector.
+      const connectionOverlap = 6;
       const artworkScale = (hookTopY + connectionOverlap - boomY)
         / (sourceShackleBottomY - sourceTopChordY);
       const endX = basketX - (sourceCableX - sourceEndX) * artworkScale;
@@ -2142,6 +2142,9 @@ class TowerPhysicsGame {
     const basketY = GOAL_BASKET_Y;
     const boomY = basketY - 180;
     ctx.save();
+    // The basket resources intentionally sit above the boom end. Their full
+    // wheel/hook assembly hides the short connector underlap without a gap.
+    this.drawCraneBoom(basketX, boomY, basketY - 86);
     const basketArtwork = this.goalBasketArtwork(pluckProgress);
     if (this.imageReady(basketArtwork)) {
       // Switch atomically at the grasp frame. Cross-fading two complete
@@ -2163,9 +2166,6 @@ class TowerPhysicsGame {
       ctx.arc(basketX + 2, basketY - 60, 4, 0, Math.PI * 2);
       ctx.fill();
     }
-    // Draw the mechanically complete end assembly last so its swivel and
-    // shackle sit over the cleaned hook crop instead of being hidden behind it.
-    this.drawCraneBoom(basketX, boomY, basketY - 86);
     // A long, slightly swaying rescue rope gives the suspended basket a clear
     // vertical connection that remains visible in the same phone viewport.
     const ropeStartY = basketY + 56;
@@ -2229,14 +2229,17 @@ class TowerPhysicsGame {
 
   private drawWorld() {
     this.dynamicBodies.forEach((body) => this.drawItem(body));
-    if (this.held) this.drawGhost(this.held);
-
     if (this.status === "activating" || this.status === "plucking" || this.status === "cleared") {
       // The scene itself cross-fades from polluted to revived. A previous
       // fixed-width yellow wash exposed hard vertical edges on wide screens
       // and made the transition feel artificial, so the colour block is gone.
       this.drawSuccessRobot();
     }
+    // Keep the basket's front rail in one invariant layer for the entire run.
+    // Previously it was introduced only during plucking, which made the basket
+    // appear to jump in front of the completed tower at the grab frame.
+    this.drawBasketForeground(this.pluckProgress());
+    if (this.held) this.drawGhost(this.held);
   }
 
   private drawSuccessRobot() {
@@ -2270,10 +2273,10 @@ class TowerPhysicsGame {
     const settleEnd = 0.16;
     const transition = smoothStep(pluckProgress / settleEnd);
     const startAnchor = this.frozenGoalAnchor ?? pose.anchor;
-    // The soil surface in the basket artwork is at +53 world pixels. Anchoring
+    // The soil surface in the replacement basket is at about +50 world pixels. Anchoring
     // both shoes there, then redrawing the front rail, makes the robot stand
     // inside the cage rather than hover in front of it.
-    const finalAnchor = { x: basketX - 30, y: basketY + 53 };
+    const finalAnchor = { x: basketX - 22, y: basketY + 50 };
     const robotX = startAnchor.x + (finalAnchor.x - startAnchor.x) * transition;
     const robotFootY = startAnchor.y + 7 + (finalAnchor.y - (startAnchor.y + 7)) * transition;
 
@@ -2291,7 +2294,6 @@ class TowerPhysicsGame {
         ROBOT_CLIMB_FRAME_BOUNDS,
         this.frozenClimbFrame.flipX,
       );
-      this.drawBasketForeground(pluckProgress);
       return;
     }
 
@@ -2313,7 +2315,6 @@ class TowerPhysicsGame {
       false,
     );
 
-    this.drawBasketForeground(pluckProgress);
     if (pluckProgress < PLUCK_GRAB_PROGRESS) return;
     const collect = smoothStep((pluckProgress - PLUCK_GRAB_PROGRESS) / (1 - PLUCK_GRAB_PROGRESS));
     this.drawCollectedSprout(
