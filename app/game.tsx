@@ -2670,11 +2670,11 @@ interface GameStageProps {
 }
 
 type ConfirmationAction = "reset" | "exit" | null;
-type EndingPhase = "video" | "hold" | "black" | "epilogue";
+type EndingPhase = "video" | "hold" | "fading" | "black" | "epilogue";
 
 const ENDING_LAST_FRAME_HOLD_MS = 500;
 const ENDING_FADE_TO_BLACK_MS = 850;
-const ENDING_BLACK_HOLD_MS = 2000;
+const ENDING_BLACK_HOLD_MS = 2200;
 
 function GameStage({ level, onExit, audio }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -2742,16 +2742,19 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
 
   useEffect(() => {
     if (!endingPlaying || endingPhase !== "hold") return;
-    const timer = window.setTimeout(() => setEndingPhase("black"), ENDING_LAST_FRAME_HOLD_MS);
+    const timer = window.setTimeout(() => setEndingPhase("fading"), ENDING_LAST_FRAME_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [endingPhase, endingPlaying]);
+
+  useEffect(() => {
+    if (!endingPlaying || endingPhase !== "fading") return;
+    const timer = window.setTimeout(() => setEndingPhase("black"), ENDING_FADE_TO_BLACK_MS);
     return () => window.clearTimeout(timer);
   }, [endingPhase, endingPlaying]);
 
   useEffect(() => {
     if (!endingPlaying || endingPhase !== "black") return;
-    const timer = window.setTimeout(
-      () => setEndingPhase("epilogue"),
-      ENDING_FADE_TO_BLACK_MS + ENDING_BLACK_HOLD_MS,
-    );
+    const timer = window.setTimeout(() => setEndingPhase("epilogue"), ENDING_BLACK_HOLD_MS);
     return () => window.clearTimeout(timer);
   }, [endingPhase, endingPlaying]);
 
@@ -2888,7 +2891,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 preload="auto"
                 onCanPlay={() => setEndingReady(true)}
                 onEnded={() => setEndingPhase("hold")}
-                onError={() => setEndingPhase("black")}
+                onError={() => setEndingPhase("fading")}
               >
                 <source src="/assets/victory-ending.mp4" type="video/mp4" />
               </video>

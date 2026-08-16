@@ -1230,6 +1230,7 @@ body {
 .ending-cinematic.is-ready::before { opacity: 0; }
 .ending-cinematic.is-ready.is-video .ending-cinematic-video,
 .ending-cinematic.is-ready.is-hold .ending-cinematic-video { opacity: 1; }
+.ending-cinematic.is-ready.is-fading .ending-cinematic-video,
 .ending-cinematic.is-ready.is-black .ending-cinematic-video,
 .ending-cinematic.is-ready.is-epilogue .ending-cinematic-video {
   opacity: 0;
