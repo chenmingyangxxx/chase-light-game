@@ -709,6 +709,15 @@ class GameAudio {
     this.noise(0.055, 0.005, 680);
   }
 
+  robotJoint(phase: number) {
+    const variation = (phase % 4) * 5;
+    // Quiet actuator movement between the heavier grip/foot contacts. Two
+    // short, rounded layers suggest a loaded joint without becoming a beep.
+    this.tone(236 + variation, 174 + variation * 0.45, 0.085, 0.0065, "triangle");
+    this.tone(72 + variation * 0.25, 94 + variation * 0.35, 0.07, 0.0045, "sine", 0.018);
+    this.noise(0.026, 0.0018, 1080);
+  }
+
   failure() {
     this.duckAmbience(0.48, 1600);
     this.tone(188, 58, 0.54, 0.052, "triangle");
@@ -907,6 +916,7 @@ class TowerPhysicsGame {
   private frozenGoalAnchor: ClimbPoint | null = null;
   private frozenClimbFrame = { frame: 0, nextFrame: 0, frameBlend: 0, flipX: false };
   private lastRobotAudioStep = -1;
+  private lastRobotJointAudioPhase = -1;
   private frameId = 0;
   private cameraOffsetY = VIEW_GROUND_CAMERA;
   private cameraManualOffsetY = 0;
@@ -1200,6 +1210,7 @@ class TowerPhysicsGame {
     this.frozenGoalAnchor = null;
     this.frozenClimbFrame = { frame: 0, nextFrame: 0, frameBlend: 0, flipX: false };
     this.lastRobotAudioStep = -1;
+    this.lastRobotJointAudioPhase = -1;
     this.hintIndex = 0;
     this.hintsLeft = 3;
     this.activeHint = null;
@@ -2300,6 +2311,7 @@ class TowerPhysicsGame {
     this.goalReachedAt = 0;
     this.frozenGoalAnchor = null;
     this.lastRobotAudioStep = -1;
+    this.lastRobotJointAudioPhase = -1;
     this.audio.climbStart();
     this.dynamicBodies.forEach((body) => Matter.Sleeping.set(body, false));
     // Start the cinematic at ground level even if the player was inspecting
@@ -3551,6 +3563,11 @@ class TowerPhysicsGame {
     if (pose.routeIndex !== this.lastRobotAudioStep) {
       this.lastRobotAudioStep = pose.routeIndex;
       this.audio.robotStep(pose.routeIndex);
+    }
+    const jointAudioPhase = Math.floor(pose.routePosition * 3);
+    if (jointAudioPhase !== this.lastRobotJointAudioPhase) {
+      this.lastRobotJointAudioPhase = jointAudioPhase;
+      if (jointAudioPhase % 3 !== 0) this.audio.robotJoint(jointAudioPhase);
     }
     Matter.Sleeping.set(support, false);
     const gait = Math.sin(pose.routePosition * Math.PI * 2);
