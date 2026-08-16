@@ -2921,7 +2921,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 <>
                   <img
                     className="ending-epilogue-background"
-                    src="/assets/ending-epilogue-og2.png"
+                    src="/assets/ending-epilogue-poster02.png"
                     alt="阳光重返废墟，新生命在城市中生长"
                   />
                   <div className="ending-wordmark" aria-label="追光">
