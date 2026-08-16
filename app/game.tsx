@@ -1327,7 +1327,7 @@ class TowerPhysicsGame {
     const dropZone = this.dropZoneWorldBounds();
     const x = clamp(point.x - adjusted.offsetX, dropZone.left + halfWidth + 3, dropZone.right - halfWidth - 3);
     const y = clamp(point.y - adjusted.offsetY, 52, BASE_Y - halfHeight);
-    if (item && this.itemIntersectsBasket(item, x, y, adjusted.body.angle)) {
+    if (item && this.itemCenterInsideBasket(x, y)) {
       this.message = "吊篮是任务目标，不能把搭建物料移入其中。请把物件放在吊篮下方。";
       return;
     }
@@ -1668,18 +1668,19 @@ class TowerPhysicsGame {
       && point.y > basket.top && point.y < basket.bottom;
   }
 
-  private itemIntersectsBasket(item: ItemDefinition, x: number, y: number, angle: number) {
+  private itemCenterInsideBasket(x: number, y: number) {
     const basket = this.basketForbiddenBounds();
-    const halfWidth = item.width / 2;
-    const halfHeight = item.height / 2;
-    const cosine = Math.abs(Math.cos(angle));
-    const sine = Math.abs(Math.sin(angle));
-    const extentX = item.shape === "circle" ? halfWidth : cosine * halfWidth + sine * halfHeight;
-    const extentY = item.shape === "circle" ? halfHeight : sine * halfWidth + cosine * halfHeight;
-    return x + extentX > basket.left
-      && x - extentX < basket.right
-      && y + extentY > basket.top
-      && y - extentY < basket.bottom;
+    // Only reject a release whose centre is actually inside the suspended
+    // basket.  The earlier rotated-AABB test treated every large prop that
+    // merely touched the lower rail as if it had been dropped into the cage,
+    // which made the final approach to 99 m impossible for beams, cars and
+    // other useful wide pieces.  Matter still resolves contact with the tower;
+    // this guard now protects the basket interior without blocking the usable
+    // construction space immediately below it.
+    return x > basket.left
+      && x < basket.right
+      && y > basket.top
+      && y < basket.bottom;
   }
 
   private segmentCrossesBasketForbiddenArea(start: Matter.Vector, end: Matter.Vector) {
@@ -1912,7 +1913,7 @@ class TowerPhysicsGame {
     const dropZone = this.dropZoneWorldBounds();
     const dropX = clamp(x, dropZone.left + item.width / 2 + 3, dropZone.right - item.width / 2 - 3);
     const dropY = clamp(y, halfHeight + 8, BASE_Y - halfHeight - 3);
-    if (this.itemIntersectsBasket(item, dropX, dropY, this.held.angle)) {
+    if (this.itemCenterInsideBasket(dropX, dropY)) {
       this.held = null;
       this.message = "吊篮内及其结构范围禁止放置搭建物料。请在吊篮下方完成 99 米高塔。";
       this.emit(true);
