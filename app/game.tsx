@@ -278,6 +278,7 @@ const ROBOT_PLUCK_FRAME_BOUNDS: readonly RobotFrameBounds[] = [
 
 interface GameSnapshot {
   status: GameStatus;
+  failureTitle: string;
   height: number;
   stableHeight: number;
   hintsLeft: number;
@@ -551,6 +552,7 @@ function hintsFor(level: LevelConfig, inventory: Record<ItemId, number>): HintSp
 function initialSnapshot(level: LevelConfig): GameSnapshot {
   return {
     status: "building",
+    failureTitle: "高塔失稳",
     height: 0,
     stableHeight: 0,
     hintsLeft: 3,
@@ -879,6 +881,7 @@ class TowerPhysicsGame {
   private held: HeldItem | null = null;
   private adjusting: AdjustedBody | null = null;
   private status: GameStatus = "building";
+  private failureTitle = "高塔失稳";
   private height = 0;
   private stableHeight = 0;
   private stableElapsed = 0;
@@ -1170,6 +1173,7 @@ class TowerPhysicsGame {
 
   restart() {
     this.status = "building";
+    this.failureTitle = "高塔失稳";
     this.dynamicBodies = [];
     this.fixingLinks = [];
     this.fixingInventory = fixingInventoryForRound();
@@ -1764,9 +1768,6 @@ class TowerPhysicsGame {
       if (definition.mode === "tie") {
         const taut = tieTaut;
         link.constraints[0].stiffness = taut ? definition.stiffness : 0.00001;
-        const gravityForce = definition.massKg * PHYSICS_MASS_PER_KG * (this.engine.gravity.scale || 0.001) / 2;
-        if (!link.anchorA.body.isStatic) Body.applyForce(link.anchorA.body, pointA, { x: 0, y: gravityForce });
-        if (!link.anchorB.body.isStatic) Body.applyForce(link.anchorB.body, pointB, { x: 0, y: gravityForce });
       }
 
       const loadA = link.anchorA.ground
@@ -1810,6 +1811,18 @@ class TowerPhysicsGame {
       if (!link.anchorB.body.isStatic) Matter.Sleeping.set(link.anchorB.body, false);
       this.message = `${definition.failureLabel}。结构仍会继续结算；若塔体保持稳定，任务可以继续。`;
       this.audio.strain(2.4);
+    }
+  }
+
+  private cancelFixingMaterialWeight() {
+    const gravityScale = this.engine.gravity.scale || 0.001;
+    for (const link of this.fixingLinks) {
+      const brace = link.braceBody;
+      if (!brace || brace.isStatic) continue;
+      Body.applyForce(brace, brace.position, {
+        x: -brace.mass * this.engine.gravity.x * gravityScale,
+        y: -brace.mass * this.engine.gravity.y * gravityScale,
+      });
     }
   }
 
@@ -1885,13 +1898,15 @@ class TowerPhysicsGame {
     const delta = this.lastFrame ? Math.min(33, now - this.lastFrame) : 16.667;
     this.lastFrame = now;
     this.elapsed += delta;
-    // Reaching 99 m locks the result immediately, but the flower-picking beat
-    // is allowed to finish before the ending film replaces the game scene.
-    if (this.status === "activating" && this.robotHasReachedGoal()) this.lockVictory();
+    // Height starts the climb. The result is decided only after the robot has
+    // actually reached the tower top and we know whether the flower is within
+    // arm's reach.
+    this.resolveRobotAtTowerTop();
     if (this.status === "building" || this.status === "activating" || this.status === "collapsing") {
       this.accumulator += delta;
       while (this.accumulator >= 16.667) {
         if (this.status === "activating") this.applyRobotWeight();
+        this.cancelFixingMaterialWeight();
         Engine.update(this.engine, 16.667);
         this.updateFixingLinks(16.667);
         this.accumulator -= 16.667;
@@ -1899,10 +1914,9 @@ class TowerPhysicsGame {
     } else {
       this.accumulator = 0;
     }
-    // A physics step may carry the robot across 99 m at the same instant that
-    // the stack starts to move. Lock the successful arrival before any later
-    // collapse test can report a contradictory failure for that same frame.
-    if (this.status === "activating" && this.robotHasReachedGoal()) this.lockVictory();
+    // Resolve the top arrival before any collapse test in this frame, so a
+    // valid reach cannot be overwritten by a contradictory structural result.
+    this.resolveRobotAtTowerTop();
     this.updateSimulation(delta);
     if (this.status === "plucking" && this.pluckProgress() >= 1) this.finishClear();
     this.render();
@@ -1994,19 +2008,18 @@ class TowerPhysicsGame {
 
     if (isClimbing) return;
     const hasRealStack = towerBodies.some((body) => (supportGraph.depth.get(body) ?? 0) >= 2);
-    if (this.hasReachedBasket(towerBodies, supportGraph.depth) && hasRealStack && stable && this.stableElapsed > 1250) this.activateLight();
+    if (this.hasReachedRequiredHeight(towerBodies, supportGraph.depth) && hasRealStack && stable && this.stableElapsed > 1250) this.activateLight();
   }
 
   private towerBodies() {
     return this.supportGraph().bodies;
   }
 
-  private hasReachedBasket(towerBodies: TaggedBody[], depth: Map<TaggedBody, number>) {
-    const reachableTop = towerBodies
+  private hasReachedRequiredHeight(towerBodies: TaggedBody[], depth: Map<TaggedBody, number>) {
+    const top = towerBodies
       .filter((body) => (depth.get(body) ?? 0) >= 2)
-      .filter((body) => body.bounds.max.x >= GOAL_BASKET_X - GOAL_REACH_HALF_WIDTH && body.bounds.min.x <= GOAL_BASKET_X + GOAL_REACH_HALF_WIDTH)
       .sort((a, b) => a.bounds.min.y - b.bounds.min.y)[0];
-    return Boolean(reachableTop && reachableTop.bounds.min.y <= GOAL_REACH_Y);
+    return Boolean(top && top.bounds.min.y <= GOAL_REACH_Y);
   }
 
   private supportGraph() {
@@ -2145,6 +2158,11 @@ class TowerPhysicsGame {
       const direction = body.gameBendDirection;
       Body.setAngularVelocity(body, body.angularVelocity + direction * 0.0024 * Math.min(2.2, Math.max(1, stressRatio)));
       if (this.elapsed - body.gameFracturedAt < 900) return;
+      // During the climb, overload may bend or physically topple the tower,
+      // but it must not produce a failure dialog while the structure is still
+      // visibly standing. The normal ground-contact / collapse checks below
+      // remain the only failure path until the robot reaches the top.
+      if (this.status === "activating") return;
       const shownLoad = Math.max(10, Math.round(loadKg / 10) * 10);
       const shownCapacity = Math.round(strengthenedCapacityKg / 10) * 10;
       this.fail(
@@ -2204,7 +2222,7 @@ class TowerPhysicsGame {
     // the top of the tower, then hand control to the robot-follow camera.
     this.cameraManualOffsetY = 0;
     this.cameraOffsetY = VIEW_GROUND_CAMERA;
-    this.message = "废料塔已抵达吊篮下沿，攀爬助手开始登塔。";
+    this.message = "废料塔已达到 99 米，攀爬助手开始登塔。";
     this.emit(true);
   }
 
@@ -2222,15 +2240,15 @@ class TowerPhysicsGame {
       flipX: pose.flipX,
     };
     this.status = "plucking";
-    // Once the robot reaches 99 m the result is locked. Freeze the tower at
-    // that valid instant so a later simulation step cannot create a false loss
-    // or make the top pose and camera shiver during the delicate pick-up.
+    // Once the robot reaches a tower top inside the flower-reach zone, the
+    // result is locked. Freeze the tower so a later simulation step cannot
+    // create a false loss or make the top pose shiver during the pick-up.
     this.dynamicBodies.forEach((body) => {
       Body.setVelocity(body, { x: 0, y: 0 });
       Body.setAngularVelocity(body, 0);
       Matter.Sleeping.set(body, true);
     });
-    this.message = "攀爬助手已抵达 99 米，正在摘取萌芽。";
+    this.message = "攀爬助手已抵达塔顶并进入摘花范围，正在摘取萌芽。";
     this.emit(true);
   }
 
@@ -2242,11 +2260,41 @@ class TowerPhysicsGame {
     this.emit(true);
   }
 
-  private robotHasReachedGoal() {
+  private resolveRobotAtTowerTop() {
     if (this.status !== "activating") return false;
     const route = this.activeClimbRoute();
     if (route.length < 2) return false;
-    return this.robotClimbPose(route).anchor.y <= GOAL_REACH_Y;
+    const pose = this.robotClimbPose(route);
+    if (pose.climb < 0.999) return false;
+    if (this.canReachFlowerFromRoute(route)) this.lockVictory();
+    else this.failFlowerReach();
+    return true;
+  }
+
+  private canReachFlowerFromRoute(route: ClimbPoint[]) {
+    const top = route[route.length - 1];
+    return Boolean(
+      top
+      && top.y <= GOAL_REACH_Y + 12
+      && Math.abs(top.x - GOAL_BASKET_X) <= GOAL_REACH_HALF_WIDTH,
+    );
+  }
+
+  private failFlowerReach() {
+    if (this.status !== "activating") return;
+    this.status = "failed";
+    this.failureTitle = "未能摘取小花";
+    this.held = null;
+    this.fixingDraft = null;
+    this.panning = null;
+    this.dynamicBodies.forEach((body) => {
+      Body.setVelocity(body, { x: 0, y: 0 });
+      Body.setAngularVelocity(body, 0);
+      Matter.Sleeping.set(body, true);
+    });
+    this.message = "机器人已经攀至塔顶，但塔顶不在吊篮下方的摘花范围内，手臂无法触及小花。请让 99 米处的塔顶更靠近吊篮正下方后再试——高度目标已经完成，你离成功只差最后一次对准！";
+    this.audio.failure();
+    this.emit(true);
   }
 
   private pluckProgress() {
@@ -2256,6 +2304,7 @@ class TowerPhysicsGame {
 
   private fail(reason = "塔身失去支撑并整体倒塌。把宽重物件放在底部、让重心保持居中，再试一次，你一定能搭得更稳！") {
     if (this.status !== "building" && this.status !== "activating") return;
+    this.failureTitle = "高塔失稳";
     if (this.adjusting) this.releaseAdjustedBody();
     this.status = "collapsing";
     this.pendingFailureReason = reason;
@@ -2352,14 +2401,14 @@ class TowerPhysicsGame {
     if (this.status === "plucking" || this.status === "cleared") return 1;
     const route = this.activeClimbRoute();
     if (route.length < 2) return 0;
-    const { anchor } = this.robotClimbPose(route);
-    return clamp((BASE_Y - anchor.y) / (BASE_Y - GOAL_REACH_Y), 0, 1);
+    return this.robotClimbPose(route).climb;
   }
 
   private emit(force = false) {
     if (!force && this.status === "building" && this.lastUiUpdate === 0) return;
     this.onUpdate({
       status: this.status,
+      failureTitle: this.failureTitle,
       height: this.height,
       stableHeight: this.stableHeight,
       hintsLeft: this.hintsLeft,
@@ -3531,7 +3580,6 @@ class TowerPhysicsGame {
     const { bodies, depth } = this.supportGraph();
     const candidates = bodies
       .filter((body) => (depth.get(body) ?? 0) >= 2)
-      .filter((body) => body.bounds.max.x >= GOAL_BASKET_X - GOAL_REACH_HALF_WIDTH && body.bounds.min.x <= GOAL_BASKET_X + GOAL_REACH_HALF_WIDTH)
       .sort((a, b) => a.bounds.min.y - b.bounds.min.y);
     let current = candidates[0];
     if (!current) return [] as ClimbPoint[];
@@ -3580,17 +3628,11 @@ class TowerPhysicsGame {
       const topY = body.bounds.min.y + 6;
       if (bodyIndex === 0) appendSegment({ x, y: bottomY, support: body });
       else appendSegment({ x, y: Math.min(bottomY, route[route.length - 1].y), support: body });
-      appendSegment({ x, y: topY, support: body });
+      const topX = bodyIndex === ordered.length - 1
+        ? clamp(GOAL_BASKET_X, body.bounds.min.x + 7, body.bounds.max.x - 7)
+        : x;
+      appendSegment({ x: topX, y: topY, support: body });
     });
-
-    // Once the pile reaches the lower rail, the last few holds belong to the
-    // basket frame itself, giving the robot a believable path to the flower.
-    const topSupport = ordered[ordered.length - 1];
-    [
-      { x: GOAL_BASKET_X - 44, y: GOAL_REACH_Y - 4, support: topSupport, fixed: true },
-      { x: GOAL_BASKET_X - 42, y: GOAL_BASKET_Y + 58, support: topSupport, fixed: true },
-      { x: GOAL_BASKET_X - 38, y: GOAL_BASKET_Y + 32, support: topSupport, fixed: true },
-    ].forEach(appendSegment);
     return route;
   }
 
@@ -4218,7 +4260,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
             <div className="modal-scrim result-scrim">
               <div className="secondary-dialog result-dialog failed" role="alertdialog" aria-modal="true" aria-labelledby="result-title">
                 <div className="result-symbol" aria-hidden="true">↯</div>
-                <strong id="result-title">高塔失稳</strong>
+                <strong id="result-title">{snapshot.failureTitle}</strong>
                 <p>{snapshot.message}</p>
                 <div className="dialog-actions single-action">
                   <button className="dialog-button primary" type="button" onClick={() => {
