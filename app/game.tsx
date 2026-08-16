@@ -3916,15 +3916,6 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 <span>{availableFixings}</span>
               </header>
               <div className="inventory-section-list inventory-list" aria-label="固定物料列表">
-                <p className={`fixing-helper ${snapshot.heldFixing ? "is-active" : ""}`}>
-                  {snapshot.heldFixing
-                    ? snapshot.fixingAnchorCount === 2
-                      ? "两个锚点已就绪，松手完成固定。"
-                      : snapshot.fixingAnchorCount === 1
-                        ? "首个锚点已锁定，继续拖到第二个物件或地面。"
-                        : `拖动「${FIXING_MATERIALS[snapshot.heldFixing].name}」到物件或地面，自动锁定首个锚点。`
-                    : "按住固定物料拖入场景：经过首个受力面后继续拖至第二个受力面，松手固定。"}
-                </p>
                 {FIXING_MATERIAL_ORDER.map((id) => {
                   const material = FIXING_MATERIALS[id];
                   const count = snapshot.fixingInventory[id];

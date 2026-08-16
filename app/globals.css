@@ -814,36 +814,67 @@ body {
 }
 .launch-actions {
   display: grid;
-  width: min(100%, 330px);
-  min-height: 106px;
-  gap: 10px;
+  width: min(100%, 380px);
+  min-height: 146px;
+  gap: 0;
   align-content: end;
+  justify-items: center;
   animation: launch-rise 750ms 180ms cubic-bezier(.16, .9, .24, 1) both;
 }
 .launch-start {
   position: relative;
   width: 100%;
-  min-height: 49px;
-  overflow: hidden;
-  border: 1px solid rgba(232, 244, 190, 0.72);
-  border-radius: 8px;
-  color: #23342a;
-  background: linear-gradient(90deg, #edf4bd, #bbd878);
-  box-shadow: inset 0 1px rgba(255, 255, 238, 0.68), inset 0 -2px rgba(79, 104, 68, 0.18), 0 6px 15px rgba(0, 0, 0, 0.22);
+  min-height: 0;
+  aspect-ratio: 1159 / 339;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  color: #24332a;
+  background: transparent url("/assets/launch-start-button-v2.png") center / 100% 100% no-repeat;
+  filter: drop-shadow(0 9px 15px rgba(0, 0, 0, 0.28));
   cursor: pointer;
   font-family: inherit;
   font-size: 14px;
   font-weight: 800;
   letter-spacing: .16em;
   text-shadow: 0 1px rgba(255, 255, 236, 0.48);
-  transition: transform 170ms ease, filter 170ms ease;
+  transition: transform 170ms ease, filter 170ms ease, opacity 170ms ease;
 }
-.launch-start-label { position: relative; }
-.launch-start-label { display: inline-block; min-width: 82px; }
-.launch-start:hover:not(:disabled) { filter: brightness(1.05); transform: translateY(-2px); }
-.launch-start:active:not(:disabled) { transform: translateY(0); }
+.launch-start-label {
+  position: absolute;
+  top: 47%;
+  right: 8%;
+  bottom: 9%;
+  left: 8%;
+  display: grid;
+  min-width: 82px;
+  place-items: center;
+  line-height: 1;
+  pointer-events: none;
+}
+.launch-start:hover:not(:disabled) {
+  filter: brightness(1.07) saturate(1.06) drop-shadow(0 11px 18px rgba(0, 0, 0, 0.32));
+  transform: translateY(-3px) scale(1.008);
+}
+.launch-start:active:not(:disabled) {
+  filter: brightness(.95) saturate(.96) drop-shadow(0 5px 9px rgba(0, 0, 0, 0.25));
+  transform: translateY(1px) scale(.988);
+}
+.launch-start:focus-visible {
+  outline: 2px solid rgba(237, 250, 197, .95);
+  outline-offset: 3px;
+}
+.launch-start:disabled {
+  cursor: default;
+  opacity: .62;
+  filter: grayscale(.18) brightness(.78) drop-shadow(0 5px 9px rgba(0, 0, 0, 0.2));
+}
 .launch-guide-button {
+  position: relative;
+  z-index: 1;
+  width: calc(100% - 48px);
   min-height: 42px;
+  margin-top: -4px;
   border: 1px solid rgba(204, 224, 185, 0.34);
   border-radius: 8px;
   color: rgba(235, 243, 225, 0.78);
@@ -1381,8 +1412,11 @@ body {
 }
 
 .minimal-game .fixing-material-section {
-  border-color: rgba(218, 207, 153, .2);
-  background: rgba(18, 23, 19, .3);
+  padding: 0 1px 1px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .minimal-game .inventory-section-head {
@@ -1456,33 +1490,6 @@ body {
   box-shadow: inset 0 0 13px rgba(229, 193, 105, .09);
 }
 
-.minimal-game .fixing-helper {
-  flex: 0 0 auto;
-  margin: 6px 0 0;
-  padding: 7px 8px;
-  border: 1px solid rgba(214, 231, 200, .12);
-  border-left-color: rgba(220, 207, 139, .5);
-  border-radius: 6px;
-  color: rgba(221, 231, 214, .67);
-  background: rgba(2, 12, 13, .26);
-  font-size: clamp(9px, .62vw, 10px);
-  line-height: 1.48;
-}
-
-.minimal-game .fixing-helper strong {
-  display: block;
-  margin-bottom: 2px;
-  color: rgba(241, 242, 218, .9);
-  font-size: inherit;
-}
-
-.minimal-game .fixing-helper.is-active {
-  color: rgba(236, 239, 219, .82);
-  border-color: rgba(222, 207, 135, .27);
-  border-left-color: rgba(231, 207, 119, .72);
-  background: rgba(129, 112, 62, .1);
-}
-
 .minimal-game .collapse-waiting {
   position: absolute;
   z-index: 6;
@@ -1538,12 +1545,6 @@ body {
     min-height: 13px;
     font-size: 7px;
   }
-  .minimal-game .fixing-helper {
-    margin-top: 5px;
-    padding: 6px;
-    font-size: 9px;
-    line-height: 1.42;
-  }
   .minimal-game .collapse-waiting {
     left: calc((100% - var(--game-rail-width) - 7px) / 2);
     bottom: 8px;
@@ -1558,23 +1559,10 @@ body {
   .minimal-game .inventory-panel {
     grid-template-rows: minmax(145px, 1fr) minmax(128px, .88fr);
   }
-  .minimal-game .fixing-helper {
-    max-height: 42px;
-    overflow: hidden;
-    padding-block: 4px;
-    line-height: 1.35;
-  }
 }
 
 @media (max-height: 720px) {
   .minimal-game .inventory-tab { min-height: 31px; padding-block: 4px; }
-  .minimal-game .fixing-helper {
-    max-height: 38px;
-    overflow: hidden;
-    padding-block: 5px;
-    line-height: 1.35;
-  }
-  .minimal-game .fixing-helper strong { display: inline; margin: 0 4px 0 0; }
 }
 
 @keyframes collapse-waiting-pulse {
