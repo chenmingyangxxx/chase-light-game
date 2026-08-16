@@ -659,8 +659,10 @@ body {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  transform-origin: 50% 50%;
+  will-change: transform;
   filter: drop-shadow(0 2px 7px rgba(0, 0, 0, 0.42));
-  animation: ending-music-spin 2.8s linear infinite;
+  animation: ending-music-spin 2.8s linear infinite !important;
 }
 .ending-home-button {
   position: absolute;
@@ -701,6 +703,7 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes ending-music-spin {
+  from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
@@ -719,7 +722,6 @@ body {
   .ending-wordmark,
   .ending-home-button,
   .ending-epilogue-background { animation-duration: 1ms; animation-delay: 0ms; }
-  .ending-music-playing img { animation: none; }
 }
 
 @media (max-width: 860px) {

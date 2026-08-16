@@ -39,3 +39,10 @@ yarn-error.log*
 /outputs/
 /work/
 .dev-server*.log
+.devserver/
+.devserver*.log
+site-package-*
+site-stage-*/
+push-*.pack
+push-refs.txt
+tsconfig.tsbuildinfo

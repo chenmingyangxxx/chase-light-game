@@ -53,6 +53,9 @@ const ROBOT_CLIMB_HEIGHT = 86;
 const ROBOT_PLUCK_HEIGHT = 99;
 const PLUCK_GRAB_PROGRESS = 0.58;
 const PHYSICS_MASS_PER_KG = 0.045;
+// Auxiliary fixing materials keep their real-world relative mass, while only
+// ten percent of that mass is applied to the tower simulation.
+const FIXING_WEIGHT_RATIO = 0.1;
 const STRENGTH_MULTIPLIER = 3;
 // Keep the robot's authored real-world profile, but soften the effective
 // moving payload by 50% so the climb remains readable without making every
@@ -210,6 +213,7 @@ interface FixingBody extends Matter.Body {
 interface FixingLink {
   id: number;
   materialId: FixingMaterialId;
+  installedAt: number;
   anchorA: FixAnchor;
   anchorB: FixAnchor;
   restLength: number;
@@ -695,27 +699,38 @@ class GameAudio {
   }
 
   climbStart() {
+    this.ensureOutputRunning();
     this.duckAmbience(0.72, 620);
     this.tone(148, 196, 0.18, 0.018, "triangle");
     this.tone(82, 104, 0.22, 0.024, "sine", 0.075);
+    // Prime the climb with a short two-stage latch so the mechanical layer is
+    // immediately recognisable before the regular gait begins.
+    this.tone(610, 158, 0.046, 0.028, "square", 0.018);
+    this.tone(455, 132, 0.04, 0.019, "square", 0.074);
+    this.noise(0.052, 0.0095, 1420);
   }
 
   robotStep(step: number) {
+    this.ensureOutputRunning();
     const variation = (step % 3) * 7;
-    // A soft joint servo, padded foot contact and brief metal grip. Avoid the
-    // former rising square wave, which sounded like an electronic alert.
-    this.tone(168 + variation, 126 + variation * 0.45, 0.13, 0.014, "triangle");
-    this.tone(90 + variation * 0.3, 58, 0.15, 0.024, "sine", 0.026);
-    this.noise(0.055, 0.005, 680);
+    // Two very short descending transients read as a loaded ratchet engaging
+    // ("咔-咔") without turning into an electronic alert. The lower layers keep
+    // the grip and foot contact connected to the robot's mass.
+    this.tone(620 + variation * 4, 158 + variation, 0.046, 0.03, "square");
+    this.tone(470 + variation * 3, 128 + variation * 0.5, 0.042, 0.021, "square", 0.056);
+    this.tone(188 + variation, 126 + variation * 0.45, 0.13, 0.019, "triangle", 0.012);
+    this.tone(94 + variation * 0.3, 58, 0.15, 0.027, "sine", 0.026);
+    this.noise(0.058, 0.011, 1380);
   }
 
   robotJoint(phase: number) {
+    this.ensureOutputRunning();
     const variation = (phase % 4) * 5;
-    // Quiet actuator movement between the heavier grip/foot contacts. Two
-    // short, rounded layers suggest a loaded joint without becoming a beep.
-    this.tone(236 + variation, 174 + variation * 0.45, 0.085, 0.0065, "triangle");
-    this.tone(72 + variation * 0.25, 94 + variation * 0.35, 0.07, 0.0045, "sine", 0.018);
-    this.noise(0.026, 0.0018, 1080);
+    // A lighter single catch sits between the heavier two-click step sounds.
+    this.tone(405 + variation * 3, 148 + variation, 0.042, 0.013, "square");
+    this.tone(248 + variation, 176 + variation * 0.45, 0.082, 0.012, "triangle", 0.008);
+    this.tone(76 + variation * 0.25, 98 + variation * 0.35, 0.07, 0.0065, "sine", 0.018);
+    this.noise(0.032, 0.0065, 1280);
   }
 
   failure() {
@@ -795,6 +810,14 @@ class GameAudio {
     wind.start();
     hum.start();
     this.ambientSources = [wind, hum, ...pads, padBreath];
+  }
+
+  private ensureOutputRunning() {
+    if (!this.enabled || !this.context || this.context.state !== "suspended") return;
+    // The context is first unlocked by the Start button. Some browsers suspend
+    // it again while the long construction scene is running, so resume it when
+    // a climb event arrives instead of silently dropping every joint sound.
+    void this.context.resume().catch(() => undefined);
   }
 
   private stopAmbience() {
@@ -1738,7 +1761,7 @@ class TowerPhysicsGame {
 
     const constraints: Matter.Constraint[] = [];
     let braceBody: FixingBody | undefined;
-    let restLength = distance;
+    const restLength = distance;
     if (definition.mode === "brace") {
       const midpoint = { x: (worldA.x + worldB.x) / 2, y: (worldA.y + worldB.y) / 2 };
       const angle = Math.atan2(worldB.y - worldA.y, worldB.x - worldA.x);
@@ -1762,7 +1785,21 @@ class TowerPhysicsGame {
       ) as FixingBody;
       braceBody.gameFixingId = materialId;
       Body.setAngle(braceBody, angle);
-      Body.setMass(braceBody, definition.massKg * PHYSICS_MASS_PER_KG);
+      Body.setMass(braceBody, definition.massKg * FIXING_WEIGHT_RATIO * PHYSICS_MASS_PER_KG);
+      // Match the connected pieces' motion before installing the joints. A
+      // stationary brace attached to moving bodies would otherwise create an
+      // artificial impulse on the very first physics step.
+      const velocityA = anchorA.body.isStatic ? { x: 0, y: 0 } : anchorA.body.velocity;
+      const velocityB = anchorB.body.isStatic ? { x: 0, y: 0 } : anchorB.body.velocity;
+      Body.setVelocity(braceBody, {
+        x: (velocityA.x + velocityB.x) / 2,
+        y: (velocityA.y + velocityB.y) / 2,
+      });
+      Body.setAngularVelocity(
+        braceBody,
+        ((anchorA.body.isStatic ? 0 : anchorA.body.angularVelocity)
+          + (anchorB.body.isStatic ? 0 : anchorB.body.angularVelocity)) / 2,
+      );
       const half = distance / 2;
       constraints.push(
         Constraint.create({
@@ -1771,8 +1808,8 @@ class TowerPhysicsGame {
           bodyB: braceBody,
           pointB: { x: -half, y: 0 },
           length: 0,
-          stiffness: definition.stiffness,
-          damping: definition.damping,
+          stiffness: 0.00001,
+          damping: 0,
           label: `fixing:${materialId}:a`,
         }),
         Constraint.create({
@@ -1781,23 +1818,24 @@ class TowerPhysicsGame {
           bodyB: anchorB.body,
           pointB: anchorB.local,
           length: 0,
-          stiffness: definition.stiffness,
-          damping: definition.damping,
+          stiffness: 0.00001,
+          damping: 0,
           label: `fixing:${materialId}:b`,
         }),
       );
       World.add(this.engine.world, [braceBody, ...constraints]);
     } else {
-      if (materialId === "ratchetStrap") restLength = distance * 0.94;
-      else if (materialId === "steelBand") restLength = distance * 0.98;
+      // Install flexible fixings at their exact current span. Deliberately
+      // shortening a high-stiffness constraint here used to create a large
+      // one-frame yank as soon as the second anchor was released.
       constraints.push(Constraint.create({
         bodyA: anchorA.body,
         pointA: anchorA.local,
         bodyB: anchorB.body,
         pointB: anchorB.local,
         length: restLength,
-        stiffness: definition.stiffness,
-        damping: definition.damping,
+        stiffness: 0.00001,
+        damping: 0,
         label: `fixing:${materialId}`,
       }));
       World.add(this.engine.world, constraints[0]);
@@ -1806,6 +1844,7 @@ class TowerPhysicsGame {
     this.fixingLinks.push({
       id: this.nextFixingId++,
       materialId,
+      installedAt: this.elapsed,
       anchorA,
       anchorB,
       restLength,
@@ -1840,11 +1879,20 @@ class TowerPhysicsGame {
       const relativeY = velocityB.y - velocityA.y;
       const axialSpeed = Math.abs(relativeX * unitX + relativeY * unitY);
       const shearSpeed = Math.abs(relativeX * -unitY + relativeY * unitX);
+      // Ramp a newly installed fixing into service instead of applying full
+      // stiffness and damping in a single physics frame.
+      const installBlend = smoothStep(clamp((this.elapsed - link.installedAt) / 280, 0, 1));
 
       const tieTaut = definition.mode === "tie" && length > link.restLength * 1.001;
       if (definition.mode === "tie") {
         const taut = tieTaut;
-        link.constraints[0].stiffness = taut ? definition.stiffness : 0.00001;
+        link.constraints[0].stiffness = taut ? Math.max(0.00001, definition.stiffness * installBlend) : 0.00001;
+        link.constraints[0].damping = taut ? definition.damping * installBlend : 0;
+      } else {
+        link.constraints.forEach((constraint) => {
+          constraint.stiffness = Math.max(0.00001, definition.stiffness * installBlend);
+          constraint.damping = definition.damping * installBlend;
+        });
       }
 
       const loadA = link.anchorA.ground
@@ -1866,8 +1914,9 @@ class TowerPhysicsGame {
         ? Math.max(0, -signedStrain) / Math.max(0.001, definition.maxStrain) * definition.compressiveN
           + carriedAxialN
         : 0;
-      const dynamicN = axialSpeed * definition.massKg * 46;
-      const shearN = shearSpeed * definition.massKg * 38 + carriedShearN;
+      const effectiveMassKg = definition.massKg * FIXING_WEIGHT_RATIO;
+      const dynamicN = axialSpeed * effectiveMassKg * 46;
+      const shearN = shearSpeed * effectiveMassKg * 38 + carriedShearN;
       const tensionRatio = (tensionN + dynamicN) / Math.max(1, definition.tensileN * STRENGTH_MULTIPLIER);
       const compressionRatio = compressionN / Math.max(1, definition.compressiveN * STRENGTH_MULTIPLIER);
       const shearRatio = shearN / Math.max(1, definition.shearN * STRENGTH_MULTIPLIER);
@@ -1891,15 +1940,22 @@ class TowerPhysicsGame {
     }
   }
 
-  private cancelFixingMaterialWeight() {
+  private applyFixingMaterialWeight() {
     const gravityScale = this.engine.gravity.scale || 0.001;
     for (const link of this.fixingLinks) {
-      const brace = link.braceBody;
-      if (!brace || brace.isStatic) continue;
-      Body.applyForce(brace, brace.position, {
-        x: -brace.mass * this.engine.gravity.x * gravityScale,
-        y: -brace.mass * this.engine.gravity.y * gravityScale,
-      });
+      if (link.broken) continue;
+      const definition = FIXING_MATERIALS[link.materialId];
+      // Brace bodies already receive gravity from Matter using their scaled
+      // mass. Flexible links have no body, so distribute their ten-percent
+      // weight equally across both anchors.
+      if (definition.mode !== "tie") continue;
+      const halfMatterMass = definition.massKg * FIXING_WEIGHT_RATIO * PHYSICS_MASS_PER_KG / 2;
+      const force = {
+        x: halfMatterMass * this.engine.gravity.x * gravityScale,
+        y: halfMatterMass * this.engine.gravity.y * gravityScale,
+      };
+      if (!link.anchorA.body.isStatic) Body.applyForce(link.anchorA.body, this.anchorWorld(link.anchorA), force);
+      if (!link.anchorB.body.isStatic) Body.applyForce(link.anchorB.body, this.anchorWorld(link.anchorB), force);
     }
   }
 
@@ -1989,7 +2045,7 @@ class TowerPhysicsGame {
       this.accumulator += delta;
       while (this.accumulator >= 16.667) {
         if (this.status === "activating") this.applyRobotWeight();
-        this.cancelFixingMaterialWeight();
+        this.applyFixingMaterialWeight();
         Engine.update(this.engine, 16.667);
         this.updateFixingLinks(16.667);
         this.accumulator -= 16.667;
@@ -4229,11 +4285,6 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
             <div className="stage-actions" aria-label="游戏操作">
               <button className="stage-action reset-action" type="button" onClick={() => { audio.ui(); setConfirmation("reset"); }}>重置</button>
               <button className="stage-action exit-action" type="button" onClick={() => { audio.ui(); setConfirmation("exit"); }}>退出</button>
-            </div>
-          )}
-          {(snapshot.status === "activating" || snapshot.status === "plucking") && (
-            <div className="activation-strip" aria-live="polite">
-              <span>{snapshot.status === "plucking" ? "正在摘取萌芽" : "机器人攀爬中"}</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
             </div>
           )}
           {snapshot.status === "collapsing" && (
