@@ -1924,34 +1924,156 @@ class TowerPhysicsGame {
     ctx.restore();
   }
 
+  private drawCraneBoom(basketX: number, boomY: number, hookTopY: number) {
+    const ctx = this.context;
+    const boomStartX = this.viewportWorldLeft - 46;
+    const boomEndX = basketX + 24;
+    const lowerChordY = boomY + 43;
+    const panelWidth = 54;
+
+    const strokeLine = (
+      fromX: number,
+      fromY: number,
+      toX: number,
+      toY: number,
+      color: string,
+      width: number,
+    ) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(fromX, fromY);
+      ctx.lineTo(toX, toY);
+      ctx.stroke();
+    };
+
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    // Weathered upper and lower chords give the boom a believable load path.
+    strokeLine(boomStartX, boomY, boomEndX, boomY, "rgba(20, 28, 28, 0.98)", 14);
+    strokeLine(boomStartX, boomY - 2.3, boomEndX, boomY - 2.3, "rgba(126, 101, 67, 0.62)", 2.4);
+    strokeLine(boomStartX, lowerChordY, boomEndX - 9, lowerChordY, "rgba(25, 33, 32, 0.96)", 7.5);
+    strokeLine(
+      boomStartX,
+      lowerChordY - 1.4,
+      boomEndX - 9,
+      lowerChordY - 1.4,
+      "rgba(143, 111, 69, 0.48)",
+      1.5,
+    );
+
+    // Alternating box-truss panels replace the old decorative zig-zag line.
+    // Their nodes, posts and gussets now visibly transfer the basket's weight.
+    let panelIndex = 0;
+    for (let x = boomStartX; x < boomEndX - 10; x += panelWidth, panelIndex += 1) {
+      const x0 = x;
+      const x1 = Math.min(x + panelWidth, boomEndX - 10);
+      const inset = 5;
+      if (x1 - x0 < 14) continue;
+      strokeLine(x0, boomY + 2, x0, lowerChordY - 2, "rgba(26, 34, 33, 0.94)", 4.2);
+      const fromTop = panelIndex % 2 === 0;
+      const braceStartY = fromTop ? boomY + inset : lowerChordY - inset;
+      const braceEndY = fromTop ? lowerChordY - inset : boomY + inset;
+      strokeLine(x0 + inset, braceStartY, x1 - inset, braceEndY, "rgba(29, 37, 35, 0.96)", 5.2);
+      strokeLine(x0 + inset, braceStartY - 0.8, x1 - inset, braceEndY - 0.8, "rgba(132, 101, 65, 0.48)", 1.25);
+
+      ctx.fillStyle = "rgba(14, 21, 21, 0.98)";
+      ctx.beginPath();
+      ctx.arc(x0, boomY, 4.1, 0, Math.PI * 2);
+      ctx.arc(x0, lowerChordY, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(151, 117, 72, 0.78)";
+      ctx.beginPath();
+      ctx.arc(x0, boomY, 1.35, 0, Math.PI * 2);
+      ctx.arc(x0, lowerChordY, 1.15, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Terminal gusset plate closes the boom instead of leaving a bare line end.
+    const plateGradient = ctx.createLinearGradient(basketX - 28, boomY, basketX + 28, lowerChordY);
+    plateGradient.addColorStop(0, "rgba(72, 69, 57, 0.98)");
+    plateGradient.addColorStop(0.48, "rgba(35, 43, 41, 0.99)");
+    plateGradient.addColorStop(1, "rgba(20, 28, 28, 0.99)");
+    ctx.fillStyle = plateGradient;
+    ctx.strokeStyle = "rgba(13, 20, 20, 0.98)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(basketX - 27, boomY - 7);
+    ctx.lineTo(basketX + 26, boomY - 7);
+    ctx.lineTo(basketX + 20, lowerChordY + 11);
+    ctx.lineTo(basketX - 20, lowerChordY + 11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Two trolley wheels, axle and an enclosed sheave complete the hoist head.
+    for (const wheelX of [basketX - 13, basketX + 13]) {
+      ctx.fillStyle = "rgba(10, 16, 16, 0.98)";
+      ctx.beginPath();
+      ctx.arc(wheelX, boomY - 6, 7.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(126, 99, 62, 0.82)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(wheelX, boomY - 6, 4.2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(17, 23, 23, 1)";
+      ctx.beginPath();
+      ctx.arc(wheelX, boomY - 6, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    strokeLine(basketX - 14, boomY + 16, basketX + 14, boomY + 16, "rgba(144, 111, 68, 0.72)", 2.2);
+
+    const sheaveY = lowerChordY + 13;
+    ctx.fillStyle = "rgba(17, 24, 24, 0.99)";
+    ctx.beginPath();
+    ctx.arc(basketX, sheaveY, 12.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(125, 92, 55, 0.95)";
+    ctx.lineWidth = 3.2;
+    ctx.beginPath();
+    ctx.arc(basketX, sheaveY, 8.7, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(158, 121, 74, 0.92)";
+    ctx.beginPath();
+    ctx.arc(basketX, sheaveY, 2.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // A two-tone steel cable ends in a swivel eye and pinned shackle, filling
+    // the previously missing link between the hoist and the basket's hook.
+    const cableStartY = sheaveY + 12;
+    const connectorY = hookTopY - 6;
+    strokeLine(basketX, cableStartY, basketX, connectorY, "rgba(15, 20, 20, 0.98)", 5.4);
+    strokeLine(basketX - 1.1, cableStartY, basketX - 1.1, connectorY, "rgba(163, 130, 78, 0.74)", 1.45);
+    ctx.fillStyle = "rgba(27, 34, 33, 0.99)";
+    ctx.strokeStyle = "rgba(146, 108, 61, 0.92)";
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.ellipse(basketX, hookTopY - 3, 8.5, 11, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(8, 13, 13, 0.98)";
+    ctx.beginPath();
+    ctx.ellipse(basketX, hookTopY - 3, 3.3, 5.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    strokeLine(basketX - 10, hookTopY + 4, basketX + 10, hookTopY + 4, "rgba(139, 100, 56, 0.96)", 4.8);
+    ctx.fillStyle = "rgba(34, 38, 34, 1)";
+    ctx.beginPath();
+    ctx.arc(basketX - 10, hookTopY + 4, 3.4, 0, Math.PI * 2);
+    ctx.arc(basketX + 10, hookTopY + 4, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   private drawGoalRig(pluckProgress: number) {
     const ctx = this.context;
     const basketX = GOAL_BASKET_X;
     const basketY = GOAL_BASKET_Y;
     const boomY = basketY - 180;
     ctx.save();
-    ctx.strokeStyle = "rgba(41, 50, 49, 0.94)";
-    ctx.lineWidth = 13;
-    ctx.lineCap = "square";
-    ctx.beginPath();
-    ctx.moveTo(this.viewportWorldLeft - 30, boomY);
-    ctx.lineTo(basketX + 4, boomY);
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(102, 106, 92, 0.52)";
-    ctx.lineWidth = 2;
-    for (let x = this.viewportWorldLeft + 18; x < basketX - 24; x += 62) {
-      ctx.beginPath();
-      ctx.moveTo(x, boomY + 7);
-      ctx.lineTo(x + 32, boomY + 37);
-      ctx.lineTo(x + 62, boomY + 7);
-      ctx.stroke();
-    }
-    ctx.strokeStyle = "rgba(27, 34, 33, 0.92)";
-    ctx.lineWidth = 3.5;
-    ctx.beginPath();
-    ctx.moveTo(basketX, boomY + 5);
-    ctx.lineTo(basketX, basketY - 78);
-    ctx.stroke();
+    this.drawCraneBoom(basketX, boomY, basketY - 86);
     if (this.imageReady(this.artwork.goal)) {
       ctx.drawImage(this.artwork.goal, basketX - 77, basketY - 86, 154, 172);
       if (pluckProgress >= 0.58 && this.imageReady(this.artwork.goalEmpty)) {
