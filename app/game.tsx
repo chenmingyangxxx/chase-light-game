@@ -38,7 +38,8 @@ const ROBOT_CLIMB_DURATION = 22000;
 // rather than cutting to the ending film the instant 99 m is reached.
 const ROBOT_PLUCK_DURATION = 3200;
 const ROBOT_CLIMB_HEIGHT = 86;
-const ROBOT_PLUCK_HEIGHT = 91;
+const ROBOT_PLUCK_HEIGHT = 99;
+const PLUCK_GRAB_PROGRESS = 0.58;
 const PHYSICS_MASS_PER_KG = 0.045;
 const STRENGTH_MULTIPLIER = 3;
 // Keep the robot's authored real-world profile, but soften the effective
@@ -206,16 +207,16 @@ const ROBOT_CLIMB_FRAME_BOUNDS: readonly RobotFrameBounds[] = [
 ];
 
 const ROBOT_PLUCK_FRAME_BOUNDS: readonly RobotFrameBounds[] = [
-  [108, 16, 318, 411],
-  [70, 27, 226, 412],
-  [36, 28, 354, 412],
-  [0, 29, 355, 412],
-  [0, 40, 159, 413],
-  [123, 28, 282, 396],
-  [78, 18, 276, 397],
-  [43, 16, 354, 397],
-  [0, 14, 355, 397],
-  [0, 8, 169, 397],
+  [105, 55, 315, 450],
+  [132, 65, 288, 450],
+  [133, 68, 286, 450],
+  [125, 66, 294, 450],
+  [115, 66, 305, 450],
+  [130, 82, 289, 450],
+  [111, 71, 309, 450],
+  [116, 71, 303, 450],
+  [110, 69, 310, 450],
+  [108, 61, 312, 450],
 ];
 
 interface GameSnapshot {
@@ -813,10 +814,10 @@ class TowerPhysicsGame {
       monitor: this.loadArtwork("/assets/worn-monitor.png"),
       debris: this.loadArtwork("/assets/ground-debris-foreground.png"),
       craneBoom: this.loadArtwork("/assets/crane-boom-cast-iron-v1.png"),
-      goal: this.loadArtwork("/assets/crane-basket-sprout.png"),
-      goalEmpty: this.loadArtwork("/assets/crane-basket-soil-empty.png"),
+      goal: this.loadArtwork("/assets/crane-basket-sprout-v2.png"),
+      goalEmpty: this.loadArtwork("/assets/crane-basket-soil-empty-v2.png"),
       robotClimb: this.loadArtwork("/assets/robot-climb-frames-v2.png"),
-      robotPluck: this.loadArtwork("/assets/robot-pluck-grid-v3.png"),
+      robotPluck: this.loadArtwork("/assets/robot-pluck-grid-v4.png"),
     };
     this.createWorld();
   }
@@ -1940,7 +1941,10 @@ class TowerPhysicsGame {
       const sourceEndX = 1710;
       const sourceEndWidth = boomArtwork.naturalWidth - sourceEndX;
       const sourceEndHeight = boomArtwork.naturalHeight;
-      const connectionOverlap = 6;
+      // The basket's legacy top crop started midway through a pulley. The
+      // cleaned basket removes that fragment, and this cast-iron shackle now
+      // overlaps the complete hook far enough to form one continuous joint.
+      const connectionOverlap = 14;
       const artworkScale = (hookTopY + connectionOverlap - boomY)
         / (sourceShackleBottomY - sourceTopChordY);
       const endX = basketX - (sourceCableX - sourceEndX) * artworkScale;
@@ -2138,19 +2142,12 @@ class TowerPhysicsGame {
     const basketY = GOAL_BASKET_Y;
     const boomY = basketY - 180;
     ctx.save();
-    this.drawCraneBoom(basketX, boomY, basketY - 86);
-    if (this.imageReady(this.artwork.goal)) {
-      ctx.drawImage(this.artwork.goal, basketX - 77, basketY - 86, 154, 172);
-      if (pluckProgress >= 0.58 && this.imageReady(this.artwork.goalEmpty)) {
-        // Cross-fade to the matching post-pluck photograph. The previous
-        // programme-drawn rectangle read as a black block because its flat
-        // gradient and mesh could not match the basket's real perspective.
-        const removal = smoothStep((pluckProgress - 0.58) / 0.12);
-        ctx.save();
-        ctx.globalAlpha = removal;
-        ctx.drawImage(this.artwork.goalEmpty, basketX - 77, basketY - 86, 154, 172);
-        ctx.restore();
-      }
+    const basketArtwork = this.goalBasketArtwork(pluckProgress);
+    if (this.imageReady(basketArtwork)) {
+      // Switch atomically at the grasp frame. Cross-fading two complete
+      // photographs left the flower visible in the soil while a second copy
+      // was already travelling with the robot's hand.
+      ctx.drawImage(basketArtwork, basketX - 77, basketY - 86, 154, 172);
     } else {
       ctx.strokeStyle = "rgba(137, 133, 100, 0.92)";
       ctx.lineWidth = 3;
@@ -2166,6 +2163,9 @@ class TowerPhysicsGame {
       ctx.arc(basketX + 2, basketY - 60, 4, 0, Math.PI * 2);
       ctx.fill();
     }
+    // Draw the mechanically complete end assembly last so its swivel and
+    // shackle sit over the cleaned hook crop instead of being hidden behind it.
+    this.drawCraneBoom(basketX, boomY, basketY - 86);
     // A long, slightly swaying rescue rope gives the suspended basket a clear
     // vertical connection that remains visible in the same phone viewport.
     const ropeStartY = basketY + 56;
@@ -2198,6 +2198,33 @@ class TowerPhysicsGame {
       ctx.fill();
     }
     ctx.restore();
+  }
+
+  private goalBasketArtwork(pluckProgress: number) {
+    if (pluckProgress >= PLUCK_GRAB_PROGRESS && this.imageReady(this.artwork.goalEmpty)) {
+      return this.artwork.goalEmpty;
+    }
+    return this.artwork.goal;
+  }
+
+  private drawBasketForeground(pluckProgress: number) {
+    const basketArtwork = this.goalBasketArtwork(pluckProgress);
+    if (!this.imageReady(basketArtwork)) return;
+    const sourceY = 1180;
+    const sourceHeight = basketArtwork.naturalHeight - sourceY;
+    const destinationY = GOAL_BASKET_Y - 86 + (sourceY / basketArtwork.naturalHeight) * 172;
+    const destinationHeight = (sourceHeight / basketArtwork.naturalHeight) * 172;
+    this.context.drawImage(
+      basketArtwork,
+      0,
+      sourceY,
+      basketArtwork.naturalWidth,
+      sourceHeight,
+      GOAL_BASKET_X - 77,
+      destinationY,
+      154,
+      destinationHeight,
+    );
   }
 
   private drawWorld() {
@@ -2243,7 +2270,10 @@ class TowerPhysicsGame {
     const settleEnd = 0.16;
     const transition = smoothStep(pluckProgress / settleEnd);
     const startAnchor = this.frozenGoalAnchor ?? pose.anchor;
-    const finalAnchor = { x: basketX - 30, y: basketY + 31 };
+    // The soil surface in the basket artwork is at +53 world pixels. Anchoring
+    // both shoes there, then redrawing the front rail, makes the robot stand
+    // inside the cage rather than hover in front of it.
+    const finalAnchor = { x: basketX - 30, y: basketY + 53 };
     const robotX = startAnchor.x + (finalAnchor.x - startAnchor.x) * transition;
     const robotFootY = startAnchor.y + 7 + (finalAnchor.y - (startAnchor.y + 7)) * transition;
 
@@ -2261,6 +2291,7 @@ class TowerPhysicsGame {
         ROBOT_CLIMB_FRAME_BOUNDS,
         this.frozenClimbFrame.flipX,
       );
+      this.drawBasketForeground(pluckProgress);
       return;
     }
 
@@ -2282,8 +2313,9 @@ class TowerPhysicsGame {
       false,
     );
 
-    if (pluckProgress < 0.58) return;
-    const collect = smoothStep((pluckProgress - 0.58) / 0.42);
+    this.drawBasketForeground(pluckProgress);
+    if (pluckProgress < PLUCK_GRAB_PROGRESS) return;
+    const collect = smoothStep((pluckProgress - PLUCK_GRAB_PROGRESS) / (1 - PLUCK_GRAB_PROGRESS));
     this.drawCollectedSprout(
       basketX - 2 + (robotX + 14 - (basketX - 2)) * collect,
       basketY + 23 + (robotFootY - ROBOT_PLUCK_HEIGHT * 0.79 - (basketY + 23)) * collect,
