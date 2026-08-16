@@ -775,6 +775,7 @@ class TowerPhysicsGame {
     | "junk"
     | "risky"
     | "debris"
+    | "craneBoom"
     | "goal"
     | "goalEmpty"
     | "monitor"
@@ -811,6 +812,7 @@ class TowerPhysicsGame {
       risky: this.loadArtwork("/assets/front-risky-props-v2.png"),
       monitor: this.loadArtwork("/assets/worn-monitor.png"),
       debris: this.loadArtwork("/assets/ground-debris-foreground.png"),
+      craneBoom: this.loadArtwork("/assets/crane-boom-cast-iron-v1.png"),
       goal: this.loadArtwork("/assets/crane-basket-sprout.png"),
       goalEmpty: this.loadArtwork("/assets/crane-basket-soil-empty.png"),
       robotClimb: this.loadArtwork("/assets/robot-climb-frames-v2.png"),
@@ -1926,6 +1928,69 @@ class TowerPhysicsGame {
 
   private drawCraneBoom(basketX: number, boomY: number, hookTopY: number) {
     const ctx = this.context;
+    const boomArtwork = this.artwork.craneBoom;
+
+    if (this.imageReady(boomArtwork)) {
+      // The high-resolution boom is never stretched across the viewport. Its
+      // cast-iron lattice is repeated at a fixed scale, while a separate end
+      // crop preserves the trolley, grooved sheave, cable, swivel and shackle.
+      const sourceTopChordY = 82;
+      const sourceShackleBottomY = 653;
+      const sourceCableX = 1935;
+      const sourceEndX = 1710;
+      const sourceEndWidth = boomArtwork.naturalWidth - sourceEndX;
+      const sourceEndHeight = boomArtwork.naturalHeight;
+      const connectionOverlap = 6;
+      const artworkScale = (hookTopY + connectionOverlap - boomY)
+        / (sourceShackleBottomY - sourceTopChordY);
+      const endX = basketX - (sourceCableX - sourceEndX) * artworkScale;
+      const endY = boomY - sourceTopChordY * artworkScale;
+      const endWidth = sourceEndWidth * artworkScale;
+      const endHeight = sourceEndHeight * artworkScale;
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+
+      // This two-panel crop begins and ends on gusset nodes, allowing it to
+      // repeat cleanly on phone and ultra-wide views without distorted metal.
+      const tileSourceX = 310;
+      const tileSourceY = 73;
+      const tileSourceWidth = 496;
+      const tileSourceHeight = 270;
+      const tileWidth = tileSourceWidth * artworkScale;
+      const tileHeight = tileSourceHeight * artworkScale;
+      const tileY = boomY - (sourceTopChordY - tileSourceY) * artworkScale;
+      const trussEndX = endX + 4;
+      for (let x = trussEndX - tileWidth; x > this.viewportWorldLeft - tileWidth; x -= tileWidth - 0.8) {
+        ctx.drawImage(
+          boomArtwork,
+          tileSourceX,
+          tileSourceY,
+          tileSourceWidth,
+          tileSourceHeight,
+          x,
+          tileY,
+          tileWidth + 0.9,
+          tileHeight,
+        );
+      }
+
+      ctx.drawImage(
+        boomArtwork,
+        sourceEndX,
+        0,
+        sourceEndWidth,
+        sourceEndHeight,
+        endX,
+        endY,
+        endWidth,
+        endHeight,
+      );
+      ctx.restore();
+      return;
+    }
+
     const boomStartX = this.viewportWorldLeft - 46;
     const boomEndX = basketX + 24;
     const lowerChordY = boomY + 43;
