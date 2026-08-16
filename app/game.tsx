@@ -179,11 +179,8 @@ interface FixAnchor {
 
 interface FixingDraft {
   materialId: FixingMaterialId;
-  start: FixAnchor;
   current: Matter.Vector;
   pointerId?: number;
-  awaitingSecond: boolean;
-  moved: boolean;
 }
 
 interface FixingBody extends Matter.Body {
@@ -202,6 +199,12 @@ interface FixingLink {
   loadRatio: number;
   broken: boolean;
   brokenAt?: number;
+}
+
+interface AutoFixCandidate {
+  anchorA: FixAnchor;
+  anchorB: FixAnchor;
+  score: number;
 }
 
 interface AdjustedBody {
@@ -786,7 +789,6 @@ class TowerPhysicsGame {
   private dynamicBodies: TaggedBody[] = [];
   private inventory: Record<ItemId, number>;
   private fixingInventory: Record<FixingMaterialId, number>;
-  private selectedFixing: FixingMaterialId | null = null;
   private fixingDraft: FixingDraft | null = null;
   private fixingLinks: FixingLink[] = [];
   private nextFixingId = 1;
@@ -837,7 +839,8 @@ class TowerPhysicsGame {
     | "monitor"
     | "robotClimb"
     | "robotPluck"
-    | "fixing",
+    | "fixing"
+    | "fixingStraight",
     HTMLImageElement
   >;
 
@@ -876,6 +879,7 @@ class TowerPhysicsGame {
       robotClimb: this.loadArtwork("/assets/robot-climb-frames-v3.png"),
       robotPluck: this.loadArtwork("/assets/robot-pluck-grid-v4.png"),
       fixing: this.loadArtwork("/assets/fixed-material-atlas-v1.png"),
+      fixingStraight: this.loadArtwork("/assets/fixed-material-straight-strip-v1.png"),
     };
     this.createWorld();
   }
@@ -912,7 +916,6 @@ class TowerPhysicsGame {
 
   startHolding(itemId: ItemId, clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building" || this.inventory[itemId] <= 0) return;
-    this.selectedFixing = null;
     this.fixingDraft = null;
     this.panning = null;
     if (this.adjusting) this.releaseAdjustedBody();
@@ -924,31 +927,21 @@ class TowerPhysicsGame {
     this.emit(true);
   }
 
-  selectFixingMaterial(materialId: FixingMaterialId) {
+  startHoldingFixing(materialId: FixingMaterialId, clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building" || this.fixingInventory[materialId] <= 0) return;
     if (this.adjusting) this.releaseAdjustedBody();
     this.held = null;
     this.panning = null;
-    if (this.selectedFixing === materialId) {
-      this.selectedFixing = null;
-      this.fixingDraft = null;
-      this.message = "已取消固定工具。";
-    } else {
-      this.selectedFixing = materialId;
-      this.fixingDraft = null;
-      this.message = `已选择「${FIXING_MATERIALS[materialId].name}」。请在物件或地面上选择第一个固定点。`;
-      this.audio.ui();
-    }
+    const point = this.clientToWorld(clientX, clientY);
+    this.fixingDraft = { materialId, current: point, pointerId };
+    this.audio.pickup(ITEMS.pallet);
+    this.message = `正在拖拽「${FIXING_MATERIALS[materialId].name}」。放到两个物件之间，或物件与地面之间即可自动固定。`;
     this.emit(true);
   }
 
   beginCanvasInteraction(clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building") return;
     const point = this.clientToWorld(clientX, clientY);
-    if (this.selectedFixing) {
-      this.beginFixingInteraction(point, pointerId);
-      return;
-    }
     if (this.held) {
       this.held.x = point.x;
       this.held.y = point.y;
@@ -1012,9 +1005,8 @@ class TowerPhysicsGame {
 
   private readonly releaseInterruptedInteraction = () => {
     if (this.fixingDraft?.pointerId !== undefined) {
-      this.fixingDraft.pointerId = undefined;
-      this.fixingDraft.awaitingSecond = true;
-      this.message = "固定操作已暂停；回到画布后重新选择第二个固定点。";
+      this.fixingDraft = null;
+      this.message = "固定材料拖拽已取消，数量不会消耗。";
       this.emit(true);
       return;
     }
@@ -1047,7 +1039,6 @@ class TowerPhysicsGame {
     this.dynamicBodies = [];
     this.fixingLinks = [];
     this.fixingInventory = fixingInventoryFor();
-    this.selectedFixing = null;
     this.fixingDraft = null;
     this.nextFixingId = 1;
     this.groundContacts.clear();
@@ -1150,8 +1141,6 @@ class TowerPhysicsGame {
     if (fixing && this.fixingDraft) {
       const point = this.clientToWorld(event.clientX, event.clientY);
       this.fixingDraft.current = point;
-      const start = this.anchorWorld(this.fixingDraft.start);
-      if (Math.hypot(point.x - start.x, point.y - start.y) > 8) this.fixingDraft.moved = true;
       return;
     }
     if (panning && this.panning) {
@@ -1181,7 +1170,8 @@ class TowerPhysicsGame {
     if (this.fixingDraft?.pointerId === event.pointerId) {
       event.preventDefault();
       const point = this.clientToWorld(event.clientX, event.clientY);
-      this.finishFixingInteraction(point);
+      const inDropZone = this.isClientInsideDropZone(event.clientX, event.clientY);
+      this.finishFixingDrop(point, inDropZone);
       return;
     }
     if (this.panning?.pointerId === event.pointerId) {
@@ -1220,9 +1210,8 @@ class TowerPhysicsGame {
   private readonly onPointerCancel = (event: PointerEvent) => {
     if (this.fixingDraft?.pointerId === event.pointerId) {
       event.preventDefault();
-      this.fixingDraft.pointerId = undefined;
-      this.fixingDraft.awaitingSecond = true;
-      this.message = "连接操作已中断，请重新选择第二个固定点。";
+      this.fixingDraft = null;
+      this.message = "固定材料拖拽已取消，数量不会消耗。";
       this.emit(true);
       return;
     }
@@ -1250,98 +1239,142 @@ class TowerPhysicsGame {
       event.preventDefault();
       this.rotateHeld(1);
     }
-    if (event.key === "Escape" && (this.held || this.adjusting || this.selectedFixing)) {
+    if (event.key === "Escape" && (this.held || this.adjusting || this.fixingDraft)) {
       this.cancelHeld();
-      if (this.selectedFixing) {
-        this.selectedFixing = null;
+      if (this.fixingDraft) {
         this.fixingDraft = null;
-        this.message = "已取消固定工具。";
+        this.message = "已取消固定材料拖拽。";
         this.emit(true);
       }
     }
   };
 
-  private beginFixingInteraction(point: Matter.Vector, pointerId: number) {
-    const materialId = this.selectedFixing;
-    if (!materialId) return;
-    if (!this.fixingDraft) {
-      const start = this.findFixAnchor(point);
-      if (!start) {
-        this.message = "固定点必须落在搭建物或地面上。请靠近物件边缘再试。";
-        this.emit(true);
-        return;
-      }
-      this.fixingDraft = {
-        materialId,
-        start,
-        current: point,
-        pointerId,
-        awaitingSecond: false,
-        moved: false,
-      };
-      this.message = `「${FIXING_MATERIALS[materialId].name}」起点已吸附。拖向第二个物件或地面，或松手后再点一次。`;
-      this.emit(true);
-      return;
-    }
-    this.fixingDraft.pointerId = pointerId;
-    this.fixingDraft.current = point;
-    this.fixingDraft.awaitingSecond = true;
-    this.fixingDraft.moved = false;
-  }
-
-  private finishFixingInteraction(point: Matter.Vector) {
+  private finishFixingDrop(point: Matter.Vector, inDropZone: boolean) {
     const draft = this.fixingDraft;
     if (!draft) return;
-    draft.current = point;
-    draft.pointerId = undefined;
-    if (!draft.moved && !draft.awaitingSecond) {
-      draft.awaitingSecond = true;
-      this.message = "起点已确定。请点击第二个物件或地面完成连接。";
+    const materialId = draft.materialId;
+    this.fixingDraft = null;
+    if (!inDropZone) {
+      this.message = "固定材料没有进入建造区，数量不会消耗。";
       this.emit(true);
       return;
     }
-    const end = this.findFixAnchor(point);
-    if (!end || (end.body.id === draft.start.body.id && end.ground === draft.start.ground)) {
-      draft.awaitingSecond = true;
-      this.message = "第二个固定点无效；请选择另一个物件，或把连接锚定到地面。";
+    const candidate = this.autoFixCandidate(point, materialId);
+    if (!candidate) {
+      this.message = `没有找到适合安装「${FIXING_MATERIALS[materialId].name}」的两处受力面。请把材料放到两个物件的接缝，或物件与地面之间。`;
       this.emit(true);
       return;
     }
-    if (draft.start.ground && end.ground) {
-      draft.awaitingSecond = true;
-      this.message = "固定材料需要至少连接一个搭建物，不能只连接两处地面。";
-      this.emit(true);
-      return;
-    }
-    this.createFixingLink(draft.materialId, draft.start, end);
+    this.createFixingLink(materialId, candidate.anchorA, candidate.anchorB);
   }
 
-  private findFixAnchor(point: Matter.Vector): FixAnchor | null {
-    // A click right on the floor means “anchor to ground”, even when the
-    // bottom object's AABB overlaps the ground line. Without this priority the
-    // most useful object-to-ground brace was often rejected as a same-body
-    // connection.
-    if (this.baseBody && Math.abs(point.y - BASE_Y) <= 18) {
-      const bounds = this.dropZoneWorldBounds();
-      const groundPoint = { x: clamp(point.x, bounds.left + 8, bounds.right - 8), y: BASE_Y };
-      return this.makeFixAnchor(this.baseBody, groundPoint, true);
-    }
-    const nearest = this.dynamicBodies
+  private autoFixCandidate(point: Matter.Vector, materialId: FixingMaterialId): AutoFixCandidate | null {
+    const definition = FIXING_MATERIALS[materialId];
+    const minimum = Math.max(10, definition.minLength * PIXELS_PER_METER);
+    const maximum = definition.maxLength * PIXELS_PER_METER;
+    const searchRadius = clamp(maximum * 0.72, 58, 118);
+    const nearby = this.dynamicBodies
       .filter((body) => !this.isFallen(body))
-      .map((body) => {
-        const x = clamp(point.x, body.bounds.min.x, body.bounds.max.x);
-        const y = clamp(point.y, body.bounds.min.y, body.bounds.max.y);
-        return { body, world: { x, y }, distance: Math.hypot(point.x - x, point.y - y) };
-      })
-      .filter((entry) => entry.distance <= 24)
-      .sort((a, b) => a.distance - b.distance)[0];
-    if (nearest) return this.makeFixAnchor(nearest.body, nearest.world, false);
-    if (this.baseBody && Math.abs(point.y - BASE_Y) <= 34) {
-      const bounds = this.dropZoneWorldBounds();
-      const groundPoint = { x: clamp(point.x, bounds.left + 8, bounds.right - 8), y: BASE_Y };
-      return this.makeFixAnchor(this.baseBody, groundPoint, true);
+      .map((body) => ({ body, distance: this.distanceToBodyBounds(point, body) }))
+      .filter((entry) => entry.distance <= searchRadius)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 8);
+    const candidates: AutoFixCandidate[] = [];
+
+    for (let index = 0; index < nearby.length; index += 1) {
+      for (let other = index + 1; other < nearby.length; other += 1) {
+        const [anchorA, anchorB] = this.pairedBodyAnchors(nearby[index].body, nearby[other].body, point);
+        const worldA = this.anchorWorld(anchorA);
+        const worldB = this.anchorWorld(anchorB);
+        const length = Math.hypot(worldB.x - worldA.x, worldB.y - worldA.y);
+        if (length < minimum || length > maximum) continue;
+        const lineDistance = this.distanceToSegment(point, worldA, worldB);
+        if (lineDistance > 52) continue;
+        candidates.push({
+          anchorA,
+          anchorB,
+          score: lineDistance + Math.hypot(point.x - (worldA.x + worldB.x) / 2, point.y - (worldA.y + worldB.y) / 2) * 0.18 + length * 0.025,
+        });
+      }
     }
-    return null;
+
+    if (this.baseBody) {
+      nearby.forEach(({ body }) => {
+        const [anchorA, anchorB] = this.bodyToGroundAnchors(body, point);
+        const worldA = this.anchorWorld(anchorA);
+        const worldB = this.anchorWorld(anchorB);
+        const length = Math.hypot(worldB.x - worldA.x, worldB.y - worldA.y);
+        if (length < minimum || length > maximum) return;
+        const lineDistance = this.distanceToSegment(point, worldA, worldB);
+        if (lineDistance > 58) return;
+        candidates.push({
+          anchorA,
+          anchorB,
+          score: lineDistance + Math.hypot(point.x - (worldA.x + worldB.x) / 2, point.y - (worldA.y + worldB.y) / 2) * 0.16 + 5,
+        });
+      });
+    }
+    return candidates.sort((a, b) => a.score - b.score)[0] ?? null;
+  }
+
+  private distanceToBodyBounds(point: Matter.Vector, body: Matter.Body) {
+    const x = clamp(point.x, body.bounds.min.x, body.bounds.max.x);
+    const y = clamp(point.y, body.bounds.min.y, body.bounds.max.y);
+    return Math.hypot(point.x - x, point.y - y);
+  }
+
+  private distanceToSegment(point: Matter.Vector, start: Matter.Vector, end: Matter.Vector) {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared <= 0.0001) return Math.hypot(point.x - start.x, point.y - start.y);
+    const t = clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared, 0, 1);
+    return Math.hypot(point.x - (start.x + dx * t), point.y - (start.y + dy * t));
+  }
+
+  private pairedBodyAnchors(bodyA: TaggedBody, bodyB: TaggedBody, dropPoint: Matter.Vector): [FixAnchor, FixAnchor] {
+    const dx = bodyB.position.x - bodyA.position.x;
+    const dy = bodyB.position.y - bodyA.position.y;
+    const vertical = Math.abs(dy) >= Math.abs(dx);
+    const side = dropPoint.x >= (bodyA.position.x + bodyB.position.x) / 2 ? 1 : -1;
+    const itemA = bodyA.gameItem;
+    const itemB = bodyB.gameItem;
+    const widthA = itemA?.width ?? bodyA.bounds.max.x - bodyA.bounds.min.x;
+    const heightA = itemA?.height ?? bodyA.bounds.max.y - bodyA.bounds.min.y;
+    const widthB = itemB?.width ?? bodyB.bounds.max.x - bodyB.bounds.min.x;
+    const heightB = itemB?.height ?? bodyB.bounds.max.y - bodyB.bounds.min.y;
+    let localA: Matter.Vector;
+    let localB: Matter.Vector;
+    if (vertical) {
+      const direction = dy >= 0 ? 1 : -1;
+      localA = { x: side * widthA * 0.34, y: direction * heightA * 0.46 };
+      localB = { x: -side * widthB * 0.34, y: -direction * heightB * 0.46 };
+    } else {
+      const direction = dx >= 0 ? 1 : -1;
+      const upper = dropPoint.y <= (bodyA.position.y + bodyB.position.y) / 2 ? -1 : 1;
+      localA = { x: direction * widthA * 0.46, y: upper * heightA * 0.3 };
+      localB = { x: -direction * widthB * 0.46, y: -upper * heightB * 0.3 };
+    }
+    const worldA = Vector.add(bodyA.position, Vector.rotate(localA, bodyA.angle));
+    const worldB = Vector.add(bodyB.position, Vector.rotate(localB, bodyB.angle));
+    return [this.makeFixAnchor(bodyA, worldA, false), this.makeFixAnchor(bodyB, worldB, false)];
+  }
+
+  private bodyToGroundAnchors(body: TaggedBody, dropPoint: Matter.Vector): [FixAnchor, FixAnchor] {
+    const item = body.gameItem;
+    const width = item?.width ?? body.bounds.max.x - body.bounds.min.x;
+    const height = item?.height ?? body.bounds.max.y - body.bounds.min.y;
+    const side = dropPoint.x >= body.position.x ? 1 : -1;
+    const local = { x: side * width * 0.42, y: height * 0.32 };
+    const world = Vector.add(body.position, Vector.rotate(local, body.angle));
+    const dropBounds = this.dropZoneWorldBounds();
+    const groundX = clamp(
+      dropPoint.x + side * Math.max(12, width * 0.18),
+      dropBounds.left + 8,
+      dropBounds.right - 8,
+    );
+    const groundPoint = { x: groundX, y: BASE_Y };
+    return [this.makeFixAnchor(body, world, false), this.makeFixAnchor(this.baseBody!, groundPoint, true)];
   }
 
   private makeFixAnchor(body: Matter.Body, world: Matter.Vector, ground: boolean): FixAnchor {
@@ -1364,10 +1397,9 @@ class TowerPhysicsGame {
     const minimum = Math.max(10, definition.minLength * PIXELS_PER_METER);
     const maximum = definition.maxLength * PIXELS_PER_METER;
     if (distance < minimum || distance > maximum) {
-      this.fixingDraft = { ...this.fixingDraft!, current: worldB, pointerId: undefined, awaitingSecond: true };
       this.message = distance > maximum
-        ? `连接距离超过「${definition.name}」的可用长度 ${definition.maxLength.toFixed(1)} 米，请缩短两点距离。`
-        : `两点距离太近，无法安装「${definition.name}」。`;
+        ? `自动连接距离超过「${definition.name}」的可用长度 ${definition.maxLength.toFixed(1)} 米，请放到更近的接缝处。`
+        : `两处受力面距离太近，无法安装「${definition.name}」。`;
       this.emit(true);
       return;
     }
@@ -1453,8 +1485,7 @@ class TowerPhysicsGame {
     });
     this.fixingInventory[materialId] -= 1;
     this.fixingDraft = null;
-    if (this.fixingInventory[materialId] <= 0) this.selectedFixing = null;
-    this.message = `「${definition.name}」已连接，受力与强度将持续由物理引擎结算。`;
+    this.message = `「${definition.name}」已自动连接到两处合理受力点，强度与载荷将持续由物理引擎结算。`;
     this.audio.place(definition.mode === "tie" ? ITEMS.pallet : ITEMS.beam);
     this.emit(true);
   }
@@ -1980,7 +2011,6 @@ class TowerPhysicsGame {
     this.collapseStartedAt = this.elapsed;
     this.collapseSettleElapsed = 0;
     this.held = null;
-    this.selectedFixing = null;
     this.fixingDraft = null;
     this.panning = null;
     this.message = "结构正在坍落，等待残骸停稳后再判断结果……";
@@ -2085,7 +2115,7 @@ class TowerPhysicsGame {
       inventory: { ...this.inventory },
       fixingInventory: { ...this.fixingInventory },
       heldItem: this.held?.itemId ?? null,
-      heldFixing: this.selectedFixing,
+      heldFixing: this.fixingDraft?.materialId ?? null,
       hint: this.activeHint,
       message: this.message,
       wind: this.level.wind,
@@ -2724,6 +2754,36 @@ class TowerPhysicsGame {
     return colors[materialId];
   }
 
+  private straightFixingSource(materialId: FixingMaterialId): [number, number, number, number] | null {
+    if (materialId === "hempRope") return [22, 310, 681, 105];
+    if (materialId === "steelWire") return [724 + 23, 325, 680, 73];
+    if (materialId === "ductTape") return [1448 + 25, 308, 673, 110];
+    return null;
+  }
+
+  private drawStraightFixingTexture(
+    materialId: FixingMaterialId,
+    start: Matter.Vector,
+    end: Matter.Vector,
+    requestedWidth: number,
+    alpha = 1,
+  ) {
+    const source = this.straightFixingSource(materialId);
+    const image = this.artwork.fixingStraight;
+    if (!source || !image.complete || !image.naturalWidth) return false;
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    const minimumWidth = materialId === "ductTape" ? 8 : materialId === "hempRope" ? 5 : 3.4;
+    const width = Math.max(requestedWidth, minimumWidth);
+    const ctx = this.context;
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.translate(start.x, start.y);
+    ctx.rotate(Math.atan2(end.y - start.y, end.x - start.x));
+    ctx.drawImage(image, source[0], source[1], source[2], source[3], 0, -width / 2, length, width);
+    ctx.restore();
+    return true;
+  }
+
   private drawFixingLinks() {
     const ctx = this.context;
     this.fixingLinks.forEach((link) => {
@@ -2768,6 +2828,27 @@ class TowerPhysicsGame {
       const a = this.anchorWorld(link.anchorA);
       const b = this.anchorWorld(link.anchorB);
       const distance = Math.hypot(b.x - a.x, b.y - a.y);
+      const textured = this.straightFixingSource(link.materialId);
+      if (textured) {
+        ctx.strokeStyle = "rgba(7, 12, 12, .82)";
+        ctx.lineWidth = width + 2.1;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        this.drawStraightFixingTexture(link.materialId, a, b, width, 1);
+        [a, b].forEach((point) => {
+          ctx.fillStyle = "#202826";
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, Math.max(2.3, width * 0.65), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = this.fixingColor(link.materialId);
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        });
+        ctx.restore();
+        return;
+      }
       const slack = Math.max(0, link.restLength - distance);
       const controlX = (a.x + b.x) / 2;
       const controlY = (a.y + b.y) / 2 + Math.min(30, slack * 0.34 + 2);
@@ -2803,31 +2884,31 @@ class TowerPhysicsGame {
   private drawFixingPreview() {
     const draft = this.fixingDraft;
     if (!draft) return;
-    const start = this.anchorWorld(draft.start);
-    const candidate = this.findFixAnchor(draft.current);
-    const valid = Boolean(candidate
-      && candidate.body.id !== draft.start.body.id
-      && !(candidate.ground && draft.start.ground));
-    const end = candidate ? this.anchorWorld(candidate) : draft.current;
     const definition = FIXING_MATERIALS[draft.materialId];
-    const distance = Math.hypot(end.x - start.x, end.y - start.y);
-    const withinLength = distance >= Math.max(10, definition.minLength * PIXELS_PER_METER)
-      && distance <= definition.maxLength * PIXELS_PER_METER;
+    const candidate = this.autoFixCandidate(draft.current, draft.materialId);
+    const previewLength = clamp((definition.minLength + definition.maxLength) * PIXELS_PER_METER * 0.34, 44, 86);
+    const start = candidate ? this.anchorWorld(candidate.anchorA) : { x: draft.current.x - previewLength / 2, y: draft.current.y };
+    const end = candidate ? this.anchorWorld(candidate.anchorB) : { x: draft.current.x + previewLength / 2, y: draft.current.y };
+    const valid = Boolean(candidate);
     const ctx = this.context;
     ctx.save();
     ctx.lineCap = "round";
-    ctx.setLineDash([6, 4]);
-    ctx.strokeStyle = valid && withinLength ? "rgba(177, 219, 133, .95)" : "rgba(236, 177, 103, .9)";
-    ctx.lineWidth = Math.max(2, definition.width * PIXELS_PER_METER * 0.7);
-    ctx.beginPath();
-    ctx.moveTo(start.x, start.y);
-    ctx.lineTo(end.x, end.y);
-    ctx.stroke();
+    const width = Math.max(2.4, definition.width * PIXELS_PER_METER * 0.74);
+    const usedTexture = this.drawStraightFixingTexture(draft.materialId, start, end, width, valid ? 0.96 : 0.72);
+    if (!usedTexture) {
+      ctx.setLineDash(valid ? [] : [6, 4]);
+      ctx.strokeStyle = valid ? "rgba(177, 219, 133, .95)" : "rgba(236, 177, 103, .9)";
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+    }
     ctx.setLineDash([]);
     [start, end].forEach((point, index) => {
-      ctx.fillStyle = index === 0 || (valid && withinLength) ? "#c7e49d" : "#e2a96e";
+      ctx.fillStyle = valid ? "#c7e49d" : "#e2a96e";
       ctx.beginPath();
-      ctx.arc(point.x, point.y, 4.2, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, valid ? 4.2 : 3.2, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = "rgba(13, 26, 22, .9)";
       ctx.lineWidth = 1.4;
@@ -3454,6 +3535,16 @@ function materialThumbnailStyle(itemId: ItemId): CSSProperties {
 }
 
 function fixingThumbnailStyle(materialId: FixingMaterialId): CSSProperties {
+  const straightCell = materialId === "hempRope" ? 0 : materialId === "steelWire" ? 1 : materialId === "ductTape" ? 2 : null;
+  if (straightCell !== null) {
+    return {
+      backgroundImage: "url(/assets/fixed-material-straight-strip-v1.png)",
+      backgroundPosition: `${straightCell * 50}% 50%`,
+      backgroundRepeat: "no-repeat",
+      backgroundSize: "300% 100%",
+      filter: "saturate(.7) brightness(.82) contrast(1.12) sepia(.08)",
+    };
+  }
   const material = FIXING_MATERIALS[materialId];
   const x = (material.column / 3) * 100;
   const y = (material.row / 2) * 100;
@@ -3504,7 +3595,6 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const endingMusicFadeRef = useRef<(() => void) | null>(null);
   const epilogueMusicFadeRef = useRef<(() => void) | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
-  const [inventoryView, setInventoryView] = useState<"building" | "fixing">("building");
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
   const [endingPhase, setEndingPhase] = useState<EndingPhase>("video");
@@ -3674,32 +3764,12 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
             </div>
           )}
           <aside className="inventory-panel panel" aria-label="搭建与固定物料工具栏">
-            <div className="inventory-tabs" role="tablist" aria-label="物料类别">
-              <button
-                className={`inventory-tab ${inventoryView === "building" ? "active" : ""}`}
-                type="button"
-                role="tab"
-                aria-selected={inventoryView === "building"}
-                onClick={() => {
-                  if (snapshot.heldFixing) gameRef.current?.selectFixingMaterial(snapshot.heldFixing);
-                  setInventoryView("building");
-                  audio.ui();
-                }}
-              >
-                搭建物料 <span className="inventory-tab-count">{availablePieces}</span>
-              </button>
-              <button
-                className={`inventory-tab ${inventoryView === "fixing" ? "active" : ""}`}
-                type="button"
-                role="tab"
-                aria-selected={inventoryView === "fixing"}
-                onClick={() => { setInventoryView("fixing"); audio.ui(); }}
-              >
-                固定物料 <span className="inventory-tab-count">{availableFixings}</span>
-              </button>
-            </div>
-            {inventoryView === "building" ? (
-              <div className="inventory-view inventory-list" role="tabpanel" aria-label="搭建物料">
+            <section className="inventory-section building-material-section" aria-labelledby="building-material-title">
+              <header className="inventory-section-head">
+                <strong id="building-material-title">搭建物料</strong>
+                <span>{availablePieces}</span>
+              </header>
+              <div className="inventory-section-list inventory-list" aria-label="搭建物料列表">
                 {inventoryItems
                   .map((id) => {
                     const item = ITEMS[id];
@@ -3732,26 +3802,34 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                   })}
                 {Object.values(snapshot.inventory).every((count) => count === 0) && <p className="empty-inventory">搭建物料已经用完，建议重试。</p>}
               </div>
-            ) : (
-              <div className="inventory-view inventory-list" role="tabpanel" aria-label="固定物料">
+            </section>
+            <section className="inventory-section fixing-material-section" aria-labelledby="fixing-material-title">
+              <header className="inventory-section-head">
+                <strong id="fixing-material-title">固定物料</strong>
+                <span>{availableFixings}</span>
+              </header>
+              <div className="inventory-section-list inventory-list" aria-label="固定物料列表">
                 <p className={`fixing-helper ${snapshot.heldFixing ? "is-active" : ""}`}>
                   {snapshot.heldFixing
-                    ? `已选择「${FIXING_MATERIALS[snapshot.heldFixing].name}」：在物件或地面上选择两个固定点。`
-                    : "选择固定材料，再连接两个物件，或把塔体锚定到地面。"}
+                    ? `拖动「${FIXING_MATERIALS[snapshot.heldFixing].name}」到接缝处，松手自动固定。`
+                    : "拖到两个物件之间，或物件与地面之间；松手自动计算固定点。"}
                 </p>
                 {FIXING_MATERIAL_ORDER.map((id) => {
                   const material = FIXING_MATERIALS[id];
                   const count = snapshot.fixingInventory[id];
-                  const selected = snapshot.heldFixing === id;
+                  const dragging = snapshot.heldFixing === id;
                   return (
                     <button
-                      className={`material-card fixing-card ${selected ? "selected" : ""} ${count === 0 ? "depleted" : ""}`}
+                      className={`material-card fixing-card ${dragging ? "selected" : ""} ${count === 0 ? "depleted" : ""}`}
                       type="button"
                       key={id}
                       disabled={!isInteractive || count === 0}
-                      aria-pressed={selected}
-                      aria-label={`${selected ? "取消" : "选择"}${material.name}，剩余 ${count} 件`}
-                      onClick={() => gameRef.current?.selectFixingMaterial(id)}
+                      aria-label={`拖拽${material.name}到接缝处自动固定，剩余 ${count} 件`}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.currentTarget.setPointerCapture?.(event.pointerId);
+                        gameRef.current?.startHoldingFixing(id, event.clientX, event.clientY, event.pointerId);
+                      }}
                     >
                       <span className="material-icon fixing" style={fixingThumbnailStyle(id)} aria-hidden="true" />
                       <span className="material-copy"><b>{material.name}</b><small>{material.mode === "tie" ? "柔性拉结" : "刚性支撑"}</small></span>
@@ -3760,7 +3838,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                   );
                 })}
               </div>
-            )}
+            </section>
           </aside>
           {snapshot.status === "failed" && (
             <div className="modal-scrim result-scrim">
@@ -4129,7 +4207,7 @@ export function DawnTowerGame() {
                     <li>从右侧“搭建物料”拖出垃圾，放入场景中的有效搭建区域。</li>
                     <li>第一件物品可以直接落在地面；从第二件开始，必须堆放在上一件物品之上。</li>
                     <li>松手后物品会受到重力、碰撞和重心影响；已经放置的物品仍可拖动调整。</li>
-                    <li>切换到“固定物料”，选择一种材料后依次连接两个物件，或把物件锚定到地面；固定材料不受堆叠顺序限制。</li>
+                    <li>从下方“固定物料”区域直接拖出材料，放到两个物件的接缝或物件与地面之间；松手后系统会自动选择合理的两处受力点。</li>
                     <li>木板、铁板和钢筋可以拉压支撑；麻绳、钢丝、胶布、皮带等只在绷紧后承受拉力。材料均有自身重量与强度，超限会弯折或断裂。</li>
                     <li>每种废料具有接近现实的相对重量、摩擦稳定性与承重差异；承重强度统一按现实参考值强化至约 3 倍。</li>
                     <li>持续超出承重上限时，物件会先弯折、压瘪或开裂，随后摩擦与稳定性下降，并可能引发整体垮塌。</li>
