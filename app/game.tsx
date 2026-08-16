@@ -2,8 +2,14 @@
 
 import Matter from "matter-js";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  FIXING_MATERIALS,
+  FIXING_MATERIAL_ORDER,
+  fixingInventoryFor,
+  type FixingMaterialId,
+} from "./fixing-materials";
 
-const { Bodies, Body, Composite, Engine, Events, World } = Matter;
+const { Bodies, Body, Composite, Constraint, Engine, Events, Vector, World } = Matter;
 
 // The playable camera is portrait first. The physics world remains taller than
 // one viewport so the full 0–99 m climb can be inspected by swiping upward.
@@ -88,7 +94,7 @@ type ItemId =
   | "bicycle"
   | "chair";
 
-type GameStatus = "building" | "activating" | "plucking" | "cleared" | "failed";
+type GameStatus = "building" | "activating" | "plucking" | "collapsing" | "cleared" | "failed";
 
 interface ArtSprite {
   asset: "junk-sprite-atlas.png" | "risky-props.png" | "monitor";
@@ -165,6 +171,39 @@ interface HeldItem {
   pointerId?: number;
 }
 
+interface FixAnchor {
+  body: Matter.Body;
+  local: Matter.Vector;
+  ground: boolean;
+}
+
+interface FixingDraft {
+  materialId: FixingMaterialId;
+  start: FixAnchor;
+  current: Matter.Vector;
+  pointerId?: number;
+  awaitingSecond: boolean;
+  moved: boolean;
+}
+
+interface FixingBody extends Matter.Body {
+  gameFixingId?: FixingMaterialId;
+}
+
+interface FixingLink {
+  id: number;
+  materialId: FixingMaterialId;
+  anchorA: FixAnchor;
+  anchorB: FixAnchor;
+  restLength: number;
+  constraints: Matter.Constraint[];
+  braceBody?: FixingBody;
+  damage: number;
+  loadRatio: number;
+  broken: boolean;
+  brokenAt?: number;
+}
+
 interface AdjustedBody {
   body: TaggedBody;
   pointerId: number;
@@ -227,7 +266,9 @@ interface GameSnapshot {
   stableHeight: number;
   hintsLeft: number;
   inventory: Record<ItemId, number>;
+  fixingInventory: Record<FixingMaterialId, number>;
   heldItem: ItemId | null;
+  heldFixing: FixingMaterialId | null;
   hint: HintSpec | null;
   message: string;
   wind: number;
@@ -428,7 +469,9 @@ function initialSnapshot(level: LevelConfig): GameSnapshot {
     stableHeight: 0,
     hintsLeft: 3,
     inventory: inventoryFor(level),
+    fixingInventory: fixingInventoryFor(),
     heldItem: null,
+    heldFixing: null,
     hint: null,
     message: "按住右侧物料拖入场景；松手后它会遵循物理规律落下。",
     wind: level.wind,
@@ -742,6 +785,11 @@ class TowerPhysicsGame {
   private engine: Matter.Engine;
   private dynamicBodies: TaggedBody[] = [];
   private inventory: Record<ItemId, number>;
+  private fixingInventory: Record<FixingMaterialId, number>;
+  private selectedFixing: FixingMaterialId | null = null;
+  private fixingDraft: FixingDraft | null = null;
+  private fixingLinks: FixingLink[] = [];
+  private nextFixingId = 1;
   private held: HeldItem | null = null;
   private adjusting: AdjustedBody | null = null;
   private status: GameStatus = "building";
@@ -749,6 +797,11 @@ class TowerPhysicsGame {
   private stableHeight = 0;
   private stableElapsed = 0;
   private collapseElapsed = 0;
+  private pendingFailureReason: string | null = null;
+  private collapseStartedAt = 0;
+  private collapseSettleElapsed = 0;
+  private groundContacts = new Map<number, number>();
+  private structuralLoadKg = new Map<number, number>();
   private hintIndex = 0;
   private hintsLeft = 3;
   private activeHint: HintSpec | null = null;
@@ -783,7 +836,8 @@ class TowerPhysicsGame {
     | "goalEmpty"
     | "monitor"
     | "robotClimb"
-    | "robotPluck",
+    | "robotPluck"
+    | "fixing",
     HTMLImageElement
   >;
 
@@ -803,6 +857,7 @@ class TowerPhysicsGame {
     this.onClear = onClear;
     this.audio = audio;
     this.inventory = inventoryFor(level);
+    this.fixingInventory = fixingInventoryFor();
     this.engine = this.createEngine();
     this.artwork = {
       // These two complete-width paintings are the canonical gameplay pair.
@@ -820,6 +875,7 @@ class TowerPhysicsGame {
       goalEmpty: this.loadArtwork("/assets/crane-basket-soil-empty-v3.png"),
       robotClimb: this.loadArtwork("/assets/robot-climb-frames-v3.png"),
       robotPluck: this.loadArtwork("/assets/robot-pluck-grid-v4.png"),
+      fixing: this.loadArtwork("/assets/fixed-material-atlas-v1.png"),
     };
     this.createWorld();
   }
@@ -856,6 +912,8 @@ class TowerPhysicsGame {
 
   startHolding(itemId: ItemId, clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building" || this.inventory[itemId] <= 0) return;
+    this.selectedFixing = null;
+    this.fixingDraft = null;
     this.panning = null;
     if (this.adjusting) this.releaseAdjustedBody();
     if (this.status !== "building") return;
@@ -866,9 +924,31 @@ class TowerPhysicsGame {
     this.emit(true);
   }
 
+  selectFixingMaterial(materialId: FixingMaterialId) {
+    if (this.status !== "building" || this.fixingInventory[materialId] <= 0) return;
+    if (this.adjusting) this.releaseAdjustedBody();
+    this.held = null;
+    this.panning = null;
+    if (this.selectedFixing === materialId) {
+      this.selectedFixing = null;
+      this.fixingDraft = null;
+      this.message = "已取消固定工具。";
+    } else {
+      this.selectedFixing = materialId;
+      this.fixingDraft = null;
+      this.message = `已选择「${FIXING_MATERIALS[materialId].name}」。请在物件或地面上选择第一个固定点。`;
+      this.audio.ui();
+    }
+    this.emit(true);
+  }
+
   beginCanvasInteraction(clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building") return;
     const point = this.clientToWorld(clientX, clientY);
+    if (this.selectedFixing) {
+      this.beginFixingInteraction(point, pointerId);
+      return;
+    }
     if (this.held) {
       this.held.x = point.x;
       this.held.y = point.y;
@@ -884,6 +964,13 @@ class TowerPhysicsGame {
     );
     if (!body) {
       this.panning = { pointerId, lastClientY: clientY };
+      return;
+    }
+    const isFixed = this.fixingLinks.some((link) => !link.broken
+      && (link.anchorA.body.id === body.id || link.anchorB.body.id === body.id));
+    if (isFixed) {
+      this.message = `「${body.gameItem?.name ?? "物件"}」仍与固定材料相连，不能直接挪动。可继续增加连接，或重置后重新布局。`;
+      this.emit(true);
       return;
     }
     this.adjusting = {
@@ -924,6 +1011,13 @@ class TowerPhysicsGame {
   }
 
   private readonly releaseInterruptedInteraction = () => {
+    if (this.fixingDraft?.pointerId !== undefined) {
+      this.fixingDraft.pointerId = undefined;
+      this.fixingDraft.awaitingSecond = true;
+      this.message = "固定操作已暂停；回到画布后重新选择第二个固定点。";
+      this.emit(true);
+      return;
+    }
     if (this.adjusting) {
       this.releaseAdjustedBody();
       this.message = "拖拽已中断，物件已恢复为受重力影响的状态。";
@@ -951,6 +1045,13 @@ class TowerPhysicsGame {
   restart() {
     this.status = "building";
     this.dynamicBodies = [];
+    this.fixingLinks = [];
+    this.fixingInventory = fixingInventoryFor();
+    this.selectedFixing = null;
+    this.fixingDraft = null;
+    this.nextFixingId = 1;
+    this.groundContacts.clear();
+    this.structuralLoadKg.clear();
     this.held = null;
     this.adjusting = null;
     this.inventory = inventoryFor(this.level);
@@ -958,6 +1059,9 @@ class TowerPhysicsGame {
     this.stableHeight = 0;
     this.stableElapsed = 0;
     this.collapseElapsed = 0;
+    this.pendingFailureReason = null;
+    this.collapseStartedAt = 0;
+    this.collapseSettleElapsed = 0;
     this.activationAt = 0;
     this.goalReachedAt = 0;
     this.activationRoute = [];
@@ -989,13 +1093,29 @@ class TowerPhysicsGame {
     });
     Events.on(engine, "collisionStart", (event) => {
       event.pairs.forEach((pair) => {
-        if (!(pair.bodyA as TaggedBody).gameItem && !(pair.bodyB as TaggedBody).gameItem) return;
+        this.trackGroundContact(pair.bodyA, pair.bodyB, 1);
+        const bodyA = pair.bodyA as TaggedBody & FixingBody;
+        const bodyB = pair.bodyB as TaggedBody & FixingBody;
+        if (!bodyA.gameItem && !bodyB.gameItem && !bodyA.gameFixingId && !bodyB.gameFixingId) return;
         const relativeX = pair.bodyA.velocity.x - pair.bodyB.velocity.x;
         const relativeY = pair.bodyA.velocity.y - pair.bodyB.velocity.y;
         this.audio.impact(Math.hypot(relativeX, relativeY) / 5.5);
       });
     });
+    Events.on(engine, "collisionEnd", (event) => {
+      event.pairs.forEach((pair) => this.trackGroundContact(pair.bodyA, pair.bodyB, -1));
+    });
     return engine;
+  }
+
+  private trackGroundContact(bodyA: Matter.Body, bodyB: Matter.Body, delta: 1 | -1) {
+    const groundLabels = new Set(["open-ground", "recovery-floor"]);
+    const itemBody = (bodyA as TaggedBody).gameItem ? bodyA : (bodyB as TaggedBody).gameItem ? bodyB : null;
+    const otherBody = itemBody === bodyA ? bodyB : itemBody === bodyB ? bodyA : null;
+    if (!itemBody || !otherBody || !groundLabels.has(otherBody.label)) return;
+    const next = Math.max(0, (this.groundContacts.get(itemBody.id) ?? 0) + delta);
+    if (next === 0) this.groundContacts.delete(itemBody.id);
+    else this.groundContacts.set(itemBody.id, next);
   }
 
   private createWorld() {
@@ -1020,12 +1140,20 @@ class TowerPhysicsGame {
 
   private readonly onPointerMove = (event: PointerEvent) => {
     if (this.status !== "building") return;
+    const fixing = this.fixingDraft?.pointerId === event.pointerId;
     const holding = this.held?.pointerId === event.pointerId;
     const adjusted = this.adjusting;
     const movingBody = adjusted?.pointerId === event.pointerId;
     const panning = this.panning?.pointerId === event.pointerId;
-    if (!holding && !movingBody && !panning) return;
+    if (!fixing && !holding && !movingBody && !panning) return;
     event.preventDefault();
+    if (fixing && this.fixingDraft) {
+      const point = this.clientToWorld(event.clientX, event.clientY);
+      this.fixingDraft.current = point;
+      const start = this.anchorWorld(this.fixingDraft.start);
+      if (Math.hypot(point.x - start.x, point.y - start.y) > 8) this.fixingDraft.moved = true;
+      return;
+    }
     if (panning && this.panning) {
       this.panCamera(event.clientY - this.panning.lastClientY);
       this.panning.lastClientY = event.clientY;
@@ -1050,6 +1178,12 @@ class TowerPhysicsGame {
   };
 
   private readonly onPointerUp = (event: PointerEvent) => {
+    if (this.fixingDraft?.pointerId === event.pointerId) {
+      event.preventDefault();
+      const point = this.clientToWorld(event.clientX, event.clientY);
+      this.finishFixingInteraction(point);
+      return;
+    }
     if (this.panning?.pointerId === event.pointerId) {
       event.preventDefault();
       this.panning = null;
@@ -1084,6 +1218,14 @@ class TowerPhysicsGame {
   };
 
   private readonly onPointerCancel = (event: PointerEvent) => {
+    if (this.fixingDraft?.pointerId === event.pointerId) {
+      event.preventDefault();
+      this.fixingDraft.pointerId = undefined;
+      this.fixingDraft.awaitingSecond = true;
+      this.message = "连接操作已中断，请重新选择第二个固定点。";
+      this.emit(true);
+      return;
+    }
     if (this.panning?.pointerId === event.pointerId) {
       event.preventDefault();
       this.panning = null;
@@ -1108,10 +1250,286 @@ class TowerPhysicsGame {
       event.preventDefault();
       this.rotateHeld(1);
     }
-    if (event.key === "Escape" && (this.held || this.adjusting)) {
+    if (event.key === "Escape" && (this.held || this.adjusting || this.selectedFixing)) {
       this.cancelHeld();
+      if (this.selectedFixing) {
+        this.selectedFixing = null;
+        this.fixingDraft = null;
+        this.message = "已取消固定工具。";
+        this.emit(true);
+      }
     }
   };
+
+  private beginFixingInteraction(point: Matter.Vector, pointerId: number) {
+    const materialId = this.selectedFixing;
+    if (!materialId) return;
+    if (!this.fixingDraft) {
+      const start = this.findFixAnchor(point);
+      if (!start) {
+        this.message = "固定点必须落在搭建物或地面上。请靠近物件边缘再试。";
+        this.emit(true);
+        return;
+      }
+      this.fixingDraft = {
+        materialId,
+        start,
+        current: point,
+        pointerId,
+        awaitingSecond: false,
+        moved: false,
+      };
+      this.message = `「${FIXING_MATERIALS[materialId].name}」起点已吸附。拖向第二个物件或地面，或松手后再点一次。`;
+      this.emit(true);
+      return;
+    }
+    this.fixingDraft.pointerId = pointerId;
+    this.fixingDraft.current = point;
+    this.fixingDraft.awaitingSecond = true;
+    this.fixingDraft.moved = false;
+  }
+
+  private finishFixingInteraction(point: Matter.Vector) {
+    const draft = this.fixingDraft;
+    if (!draft) return;
+    draft.current = point;
+    draft.pointerId = undefined;
+    if (!draft.moved && !draft.awaitingSecond) {
+      draft.awaitingSecond = true;
+      this.message = "起点已确定。请点击第二个物件或地面完成连接。";
+      this.emit(true);
+      return;
+    }
+    const end = this.findFixAnchor(point);
+    if (!end || (end.body.id === draft.start.body.id && end.ground === draft.start.ground)) {
+      draft.awaitingSecond = true;
+      this.message = "第二个固定点无效；请选择另一个物件，或把连接锚定到地面。";
+      this.emit(true);
+      return;
+    }
+    if (draft.start.ground && end.ground) {
+      draft.awaitingSecond = true;
+      this.message = "固定材料需要至少连接一个搭建物，不能只连接两处地面。";
+      this.emit(true);
+      return;
+    }
+    this.createFixingLink(draft.materialId, draft.start, end);
+  }
+
+  private findFixAnchor(point: Matter.Vector): FixAnchor | null {
+    // A click right on the floor means “anchor to ground”, even when the
+    // bottom object's AABB overlaps the ground line. Without this priority the
+    // most useful object-to-ground brace was often rejected as a same-body
+    // connection.
+    if (this.baseBody && Math.abs(point.y - BASE_Y) <= 18) {
+      const bounds = this.dropZoneWorldBounds();
+      const groundPoint = { x: clamp(point.x, bounds.left + 8, bounds.right - 8), y: BASE_Y };
+      return this.makeFixAnchor(this.baseBody, groundPoint, true);
+    }
+    const nearest = this.dynamicBodies
+      .filter((body) => !this.isFallen(body))
+      .map((body) => {
+        const x = clamp(point.x, body.bounds.min.x, body.bounds.max.x);
+        const y = clamp(point.y, body.bounds.min.y, body.bounds.max.y);
+        return { body, world: { x, y }, distance: Math.hypot(point.x - x, point.y - y) };
+      })
+      .filter((entry) => entry.distance <= 24)
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (nearest) return this.makeFixAnchor(nearest.body, nearest.world, false);
+    if (this.baseBody && Math.abs(point.y - BASE_Y) <= 34) {
+      const bounds = this.dropZoneWorldBounds();
+      const groundPoint = { x: clamp(point.x, bounds.left + 8, bounds.right - 8), y: BASE_Y };
+      return this.makeFixAnchor(this.baseBody, groundPoint, true);
+    }
+    return null;
+  }
+
+  private makeFixAnchor(body: Matter.Body, world: Matter.Vector, ground: boolean): FixAnchor {
+    return {
+      body,
+      local: Vector.rotate(Vector.sub(world, body.position), -body.angle),
+      ground,
+    };
+  }
+
+  private anchorWorld(anchor: FixAnchor) {
+    return Vector.add(anchor.body.position, Vector.rotate(anchor.local, anchor.body.angle));
+  }
+
+  private createFixingLink(materialId: FixingMaterialId, anchorA: FixAnchor, anchorB: FixAnchor) {
+    const definition = FIXING_MATERIALS[materialId];
+    const worldA = this.anchorWorld(anchorA);
+    const worldB = this.anchorWorld(anchorB);
+    const distance = Math.hypot(worldB.x - worldA.x, worldB.y - worldA.y);
+    const minimum = Math.max(10, definition.minLength * PIXELS_PER_METER);
+    const maximum = definition.maxLength * PIXELS_PER_METER;
+    if (distance < minimum || distance > maximum) {
+      this.fixingDraft = { ...this.fixingDraft!, current: worldB, pointerId: undefined, awaitingSecond: true };
+      this.message = distance > maximum
+        ? `连接距离超过「${definition.name}」的可用长度 ${definition.maxLength.toFixed(1)} 米，请缩短两点距离。`
+        : `两点距离太近，无法安装「${definition.name}」。`;
+      this.emit(true);
+      return;
+    }
+
+    const constraints: Matter.Constraint[] = [];
+    let braceBody: FixingBody | undefined;
+    let restLength = distance;
+    if (definition.mode === "brace") {
+      const midpoint = { x: (worldA.x + worldB.x) / 2, y: (worldA.y + worldB.y) / 2 };
+      const angle = Math.atan2(worldB.y - worldA.y, worldB.x - worldA.x);
+      braceBody = Bodies.rectangle(
+        midpoint.x,
+        midpoint.y,
+        distance,
+        Math.max(4, definition.width * PIXELS_PER_METER),
+        {
+          friction: 0.78,
+          frictionStatic: 0.95,
+          restitution: 0.015,
+          frictionAir: 0.008,
+          slop: 0.001,
+          // While installed, the joints transmit load and the brace should not
+          // fight its two connected bodies through overlapping end-collisions.
+          // Once it breaks it becomes solid debris and collides normally.
+          isSensor: true,
+          label: `fixing:${materialId}`,
+        },
+      ) as FixingBody;
+      braceBody.gameFixingId = materialId;
+      Body.setAngle(braceBody, angle);
+      Body.setMass(braceBody, definition.massKg * PHYSICS_MASS_PER_KG);
+      const half = distance / 2;
+      constraints.push(
+        Constraint.create({
+          bodyA: anchorA.body,
+          pointA: anchorA.local,
+          bodyB: braceBody,
+          pointB: { x: -half, y: 0 },
+          length: 0,
+          stiffness: definition.stiffness,
+          damping: definition.damping,
+          label: `fixing:${materialId}:a`,
+        }),
+        Constraint.create({
+          bodyA: braceBody,
+          pointA: { x: half, y: 0 },
+          bodyB: anchorB.body,
+          pointB: anchorB.local,
+          length: 0,
+          stiffness: definition.stiffness,
+          damping: definition.damping,
+          label: `fixing:${materialId}:b`,
+        }),
+      );
+      World.add(this.engine.world, [braceBody, ...constraints]);
+    } else {
+      if (materialId === "ratchetStrap") restLength = distance * 0.94;
+      else if (materialId === "steelBand") restLength = distance * 0.98;
+      constraints.push(Constraint.create({
+        bodyA: anchorA.body,
+        pointA: anchorA.local,
+        bodyB: anchorB.body,
+        pointB: anchorB.local,
+        length: restLength,
+        stiffness: definition.stiffness,
+        damping: definition.damping,
+        label: `fixing:${materialId}`,
+      }));
+      World.add(this.engine.world, constraints[0]);
+    }
+
+    this.fixingLinks.push({
+      id: this.nextFixingId++,
+      materialId,
+      anchorA,
+      anchorB,
+      restLength,
+      constraints,
+      braceBody,
+      damage: 0,
+      loadRatio: 0,
+      broken: false,
+    });
+    this.fixingInventory[materialId] -= 1;
+    this.fixingDraft = null;
+    if (this.fixingInventory[materialId] <= 0) this.selectedFixing = null;
+    this.message = `「${definition.name}」已连接，受力与强度将持续由物理引擎结算。`;
+    this.audio.place(definition.mode === "tie" ? ITEMS.pallet : ITEMS.beam);
+    this.emit(true);
+  }
+
+  private updateFixingLinks(delta: number) {
+    for (const link of this.fixingLinks) {
+      if (link.broken) continue;
+      const definition = FIXING_MATERIALS[link.materialId];
+      const pointA = this.anchorWorld(link.anchorA);
+      const pointB = this.anchorWorld(link.anchorB);
+      const deltaX = pointB.x - pointA.x;
+      const deltaY = pointB.y - pointA.y;
+      const length = Math.max(1, Math.hypot(deltaX, deltaY));
+      const unitX = deltaX / length;
+      const unitY = deltaY / length;
+      const signedStrain = (length - link.restLength) / Math.max(1, link.restLength);
+      const velocityA = link.anchorA.body.isStatic ? { x: 0, y: 0 } : link.anchorA.body.velocity;
+      const velocityB = link.anchorB.body.isStatic ? { x: 0, y: 0 } : link.anchorB.body.velocity;
+      const relativeX = velocityB.x - velocityA.x;
+      const relativeY = velocityB.y - velocityA.y;
+      const axialSpeed = Math.abs(relativeX * unitX + relativeY * unitY);
+      const shearSpeed = Math.abs(relativeX * -unitY + relativeY * unitX);
+
+      const tieTaut = definition.mode === "tie" && length > link.restLength * 1.001;
+      if (definition.mode === "tie") {
+        const taut = tieTaut;
+        link.constraints[0].stiffness = taut ? definition.stiffness : 0.00001;
+        const gravityForce = definition.massKg * PHYSICS_MASS_PER_KG * (this.engine.gravity.scale || 0.001) / 2;
+        if (!link.anchorA.body.isStatic) Body.applyForce(link.anchorA.body, pointA, { x: 0, y: gravityForce });
+        if (!link.anchorB.body.isStatic) Body.applyForce(link.anchorB.body, pointB, { x: 0, y: gravityForce });
+      }
+
+      const loadA = link.anchorA.ground
+        ? 0
+        : this.structuralLoadKg.get(link.anchorA.body.id) ?? link.anchorA.body.mass / PHYSICS_MASS_PER_KG;
+      const loadB = link.anchorB.ground
+        ? 0
+        : this.structuralLoadKg.get(link.anchorB.body.id) ?? link.anchorB.body.mass / PHYSICS_MASS_PER_KG;
+      const transmittedKg = link.anchorA.ground ? loadB : link.anchorB.ground ? loadA : Math.min(loadA, loadB);
+      // A shallow member needs *more* axial force to carry the same vertical
+      // load (T = W / sin(theta)), not less. Cap the projection near zero so a
+      // horizontal improvised brace fails rapidly without producing infinity.
+      const verticalProjection = Math.max(0.18, Math.abs(unitY));
+      const carriedAxialN = transmittedKg * 9.81 / verticalProjection;
+      const carriedShearN = transmittedKg * 9.81 * Math.sqrt(Math.max(0, 1 - unitY * unitY)) * 0.34;
+      const tensionN = Math.max(0, signedStrain) / Math.max(0.001, definition.maxStrain) * definition.tensileN
+        + (tieTaut || definition.mode === "brace" ? carriedAxialN : 0);
+      const compressionN = definition.mode === "brace"
+        ? Math.max(0, -signedStrain) / Math.max(0.001, definition.maxStrain) * definition.compressiveN
+          + carriedAxialN
+        : 0;
+      const dynamicN = axialSpeed * definition.massKg * 46;
+      const shearN = shearSpeed * definition.massKg * 38 + carriedShearN;
+      const tensionRatio = (tensionN + dynamicN) / Math.max(1, definition.tensileN * STRENGTH_MULTIPLIER);
+      const compressionRatio = compressionN / Math.max(1, definition.compressiveN * STRENGTH_MULTIPLIER);
+      const shearRatio = shearN / Math.max(1, definition.shearN * STRENGTH_MULTIPLIER);
+      const ratio = Math.max(tensionRatio, compressionRatio, shearRatio);
+      link.loadRatio = ratio;
+      if (ratio > 1) {
+        link.damage += delta * (0.00042 + (ratio - 1) * 0.00072);
+        this.audio.strain(ratio);
+      } else {
+        link.damage = Math.max(0, link.damage - delta * 0.000035);
+      }
+      if (link.damage < 1) continue;
+      link.broken = true;
+      link.brokenAt = this.elapsed;
+      link.constraints.forEach((constraint) => World.remove(this.engine.world, constraint));
+      if (link.braceBody) link.braceBody.isSensor = false;
+      if (!link.anchorA.body.isStatic) Matter.Sleeping.set(link.anchorA.body, false);
+      if (!link.anchorB.body.isStatic) Matter.Sleeping.set(link.anchorB.body, false);
+      this.message = `${definition.failureLabel}。结构仍会继续结算；若塔体保持稳定，任务可以继续。`;
+      this.audio.strain(2.4);
+    }
+  }
 
   private releaseAdjustedBody() {
     const adjusted = this.adjusting;
@@ -1188,11 +1606,12 @@ class TowerPhysicsGame {
     // Reaching 99 m locks the result immediately, but the flower-picking beat
     // is allowed to finish before the ending film replaces the game scene.
     if (this.status === "activating" && this.robotHasReachedGoal()) this.lockVictory();
-    if (this.status === "building" || this.status === "activating") {
+    if (this.status === "building" || this.status === "activating" || this.status === "collapsing") {
       this.accumulator += delta;
       while (this.accumulator >= 16.667) {
         if (this.status === "activating") this.applyRobotWeight();
         Engine.update(this.engine, 16.667);
+        this.updateFixingLinks(16.667);
         this.accumulator -= 16.667;
       }
     } else {
@@ -1214,6 +1633,10 @@ class TowerPhysicsGame {
 
   private updateSimulation(delta: number) {
     const isClimbing = this.status === "activating";
+    if (this.status === "collapsing") {
+      this.updateCollapseSettlement(delta);
+      return;
+    }
     if (this.status !== "building" && !isClimbing) return;
     const nonFirstBodies = this.dynamicBodies.slice(1);
     const firstBody = this.dynamicBodies[0];
@@ -1230,7 +1653,9 @@ class TowerPhysicsGame {
     // directly on the ground; every later prop must remain carried by the
     // structure. We intentionally wait for a real ground contact instead of
     // failing at pointer release or during a short settling wobble.
-    const groundedBody = nonFirstBodies.find((body) => body !== this.adjusting?.body && body.bounds.max.y >= BASE_Y - 1);
+    const groundedBody = nonFirstBodies.find((body) => (
+      body !== this.adjusting?.body && (this.groundContacts.get(body.id) ?? 0) > 0
+    ));
     if (groundedBody) {
       const itemName = groundedBody.gameItem?.name ?? "一件废料";
       this.fail(isClimbing
@@ -1241,7 +1666,10 @@ class TowerPhysicsGame {
     const supportGraph = this.supportGraph();
     const towerBodies = supportGraph.bodies;
     this.updateStructuralStress(supportGraph, delta);
-    if (this.status === "failed") return;
+    // updateStructuralStress can queue a collapse through fail(). Checking the
+    // pending reason avoids relying on TypeScript to infer a class-field state
+    // mutation that happens inside the method call.
+    if (this.status === "failed" || this.pendingFailureReason) return;
     if (this.level.wind > 0 && towerBodies.length > 0) {
       const phase = Math.sin(this.elapsed / 850) + Math.sin(this.elapsed / 1600) * 0.55;
       towerBodies.forEach((body) => {
@@ -1333,7 +1761,10 @@ class TowerPhysicsGame {
     delta: number,
   ) {
     const { bodies, depth } = graph;
-    if (!bodies.length) return;
+    if (!bodies.length) {
+      this.structuralLoadKg.clear();
+      return;
+    }
     const carriedKg = new Map<TaggedBody, number>();
     const loadAboveKg = new Map<TaggedBody, number>();
     bodies.forEach((body) => {
@@ -1376,6 +1807,13 @@ class TowerPhysicsGame {
           carriedKg.set(support, (carriedKg.get(support) ?? 0) + totalKg * share);
         });
       });
+
+    this.structuralLoadKg.clear();
+    bodies.forEach((body) => {
+      const item = body.gameItem;
+      const ownKg = item ? ITEM_PHYSICS[item.id].massKg : 0;
+      this.structuralLoadKg.set(body.id, Math.max(ownKg, carriedKg.get(body) ?? ownKg));
+    });
 
     bodies.forEach((body) => {
       const item = body.gameItem;
@@ -1536,9 +1974,46 @@ class TowerPhysicsGame {
 
   private fail(reason = "塔身失去支撑并整体倒塌。把宽重物件放在底部、让重心保持居中，再试一次，你一定能搭得更稳！") {
     if (this.status !== "building" && this.status !== "activating") return;
+    if (this.adjusting) this.releaseAdjustedBody();
+    this.status = "collapsing";
+    this.pendingFailureReason = reason;
+    this.collapseStartedAt = this.elapsed;
+    this.collapseSettleElapsed = 0;
+    this.held = null;
+    this.selectedFixing = null;
+    this.fixingDraft = null;
+    this.panning = null;
+    this.message = "结构正在坍落，等待残骸停稳后再判断结果……";
+    this.emit(true);
+  }
+
+  private updateCollapseSettlement(delta: number) {
+    this.height = this.measureHeight();
+    const braceBodies = this.fixingLinks
+      .map((link) => link.braceBody)
+      .filter((body): body is FixingBody => Boolean(body));
+    const movingBodies: Matter.Body[] = [...this.dynamicBodies, ...braceBodies];
+    const quiet = movingBodies.every((body) => body.isSleeping
+      || (body.speed < 0.2 && Math.abs(body.angularVelocity) < 0.02));
+    const hasGroundedRemains = this.dynamicBodies.some((body) => (
+      (this.groundContacts.get(body.id) ?? 0) > 0 || body.position.y >= BASE_Y - 4 || this.isFallen(body)
+    ));
+    if (quiet && hasGroundedRemains) this.collapseSettleElapsed += delta;
+    else this.collapseSettleElapsed = 0;
+
+    const elapsed = this.elapsed - this.collapseStartedAt;
+    const gentleTimeout = elapsed >= 7000 && movingBodies.every((body) => body.speed < 0.48
+      && Math.abs(body.angularVelocity) < 0.05);
+    const absoluteTimeout = elapsed >= 10000;
+    if (this.collapseSettleElapsed >= 1000 || gentleTimeout || absoluteTimeout) this.finalizeFailure();
+  }
+
+  private finalizeFailure() {
+    if (this.status !== "collapsing") return;
     this.status = "failed";
     this.audio.failure();
-    this.message = reason;
+    this.message = this.pendingFailureReason
+      ?? "塔身最终失去支撑并倒塌。加宽底部并用固定物料分散受力，再试一次，你已经找到更稳的方向了！";
     this.emit(true);
   }
 
@@ -1592,7 +2067,7 @@ class TowerPhysicsGame {
   }
 
   private activationProgress() {
-    if (this.status === "building" || this.status === "failed") return 0;
+    if (this.status === "building" || this.status === "collapsing" || this.status === "failed") return 0;
     if (this.status === "plucking" || this.status === "cleared") return 1;
     const route = this.activeClimbRoute();
     if (route.length < 2) return 0;
@@ -1608,7 +2083,9 @@ class TowerPhysicsGame {
       stableHeight: this.stableHeight,
       hintsLeft: this.hintsLeft,
       inventory: { ...this.inventory },
+      fixingInventory: { ...this.fixingInventory },
       heldItem: this.held?.itemId ?? null,
+      heldFixing: this.selectedFixing,
       hint: this.activeHint,
       message: this.message,
       wind: this.level.wind,
@@ -2229,8 +2706,139 @@ class TowerPhysicsGame {
     );
   }
 
+  private fixingColor(materialId: FixingMaterialId) {
+    const colors: Record<FixingMaterialId, string> = {
+      woodPlank: "#76583d",
+      hempRope: "#9a7b49",
+      steelWire: "#707d7c",
+      ironPlate: "#59615f",
+      rebar: "#755044",
+      ductTape: "#747873",
+      umbrella: "#5f6963",
+      leatherBelt: "#684936",
+      ratchetStrap: "#8c7440",
+      chain: "#5b6261",
+      steelBand: "#78827e",
+      nylonRope: "#60755f",
+    };
+    return colors[materialId];
+  }
+
+  private drawFixingLinks() {
+    const ctx = this.context;
+    this.fixingLinks.forEach((link) => {
+      const definition = FIXING_MATERIALS[link.materialId];
+      const stressed = link.loadRatio > 0.72;
+      const color = link.broken ? "#b1593f" : stressed ? "#d29b54" : this.fixingColor(link.materialId);
+      const width = clamp(definition.width * PIXELS_PER_METER, 2.2, 13);
+      ctx.save();
+      ctx.lineCap = definition.mode === "brace" ? "butt" : "round";
+      ctx.lineJoin = "round";
+      ctx.globalAlpha = link.broken && !link.braceBody
+        ? clamp(1 - (this.elapsed - (link.brokenAt ?? this.elapsed)) / 1300, 0, 1)
+        : 1;
+
+      if (link.braceBody) {
+        const body = link.braceBody;
+        const drawLength = link.restLength;
+        ctx.translate(body.position.x, body.position.y);
+        ctx.rotate(body.angle);
+        ctx.fillStyle = "rgba(15, 22, 21, .86)";
+        roundedRect(ctx, -drawLength / 2 - 1.6, -width / 2 - 1.6, drawLength + 3.2, width + 3.2, Math.min(3, width / 2));
+        ctx.fill();
+        ctx.fillStyle = color;
+        roundedRect(ctx, -drawLength / 2, -width / 2, drawLength, width, Math.min(2.4, width / 2));
+        ctx.fill();
+        ctx.strokeStyle = "rgba(222, 197, 139, .26)";
+        ctx.lineWidth = Math.max(0.7, width * 0.09);
+        ctx.beginPath();
+        ctx.moveTo(-drawLength / 2 + 4, -width * 0.2);
+        ctx.lineTo(drawLength / 2 - 4, -width * 0.2);
+        ctx.stroke();
+        for (const side of [-1, 1]) {
+          ctx.fillStyle = "#202927";
+          ctx.beginPath();
+          ctx.arc(side * (drawLength / 2 - 2.8), 0, Math.min(2.2, width * 0.24), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+        return;
+      }
+
+      const a = this.anchorWorld(link.anchorA);
+      const b = this.anchorWorld(link.anchorB);
+      const distance = Math.hypot(b.x - a.x, b.y - a.y);
+      const slack = Math.max(0, link.restLength - distance);
+      const controlX = (a.x + b.x) / 2;
+      const controlY = (a.y + b.y) / 2 + Math.min(30, slack * 0.34 + 2);
+      if (link.materialId === "chain") ctx.setLineDash([5.5, 3.5]);
+      else if (link.materialId === "steelWire" || link.materialId === "steelBand") ctx.setLineDash([9, 2]);
+      else if (link.materialId === "ductTape") ctx.setLineDash([3, 1.5]);
+      ctx.strokeStyle = "rgba(12, 18, 17, .92)";
+      ctx.lineWidth = width + 2.2;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(controlX, controlY, b.x, b.y);
+      ctx.stroke();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(controlX, controlY, b.x, b.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      [a, b].forEach((point) => {
+        ctx.fillStyle = "#1f2927";
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, Math.max(2.3, width * 0.65), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.1;
+        ctx.stroke();
+      });
+      ctx.restore();
+    });
+  }
+
+  private drawFixingPreview() {
+    const draft = this.fixingDraft;
+    if (!draft) return;
+    const start = this.anchorWorld(draft.start);
+    const candidate = this.findFixAnchor(draft.current);
+    const valid = Boolean(candidate
+      && candidate.body.id !== draft.start.body.id
+      && !(candidate.ground && draft.start.ground));
+    const end = candidate ? this.anchorWorld(candidate) : draft.current;
+    const definition = FIXING_MATERIALS[draft.materialId];
+    const distance = Math.hypot(end.x - start.x, end.y - start.y);
+    const withinLength = distance >= Math.max(10, definition.minLength * PIXELS_PER_METER)
+      && distance <= definition.maxLength * PIXELS_PER_METER;
+    const ctx = this.context;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = valid && withinLength ? "rgba(177, 219, 133, .95)" : "rgba(236, 177, 103, .9)";
+    ctx.lineWidth = Math.max(2, definition.width * PIXELS_PER_METER * 0.7);
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    [start, end].forEach((point, index) => {
+      ctx.fillStyle = index === 0 || (valid && withinLength) ? "#c7e49d" : "#e2a96e";
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(13, 26, 22, .9)";
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
   private drawWorld() {
     this.dynamicBodies.forEach((body) => this.drawItem(body));
+    this.drawFixingLinks();
     if (this.status === "activating" || this.status === "plucking" || this.status === "cleared") {
       // The scene itself cross-fades from polluted to revived. A previous
       // fixed-width yellow wash exposed hard vertical edges on wide screens
@@ -2242,6 +2850,7 @@ class TowerPhysicsGame {
     // appear to jump in front of the completed tower at the grab frame.
     this.drawBasketForeground(this.pluckProgress());
     if (this.held) this.drawGhost(this.held);
+    this.drawFixingPreview();
   }
 
   private drawSuccessRobot() {
@@ -2844,6 +3453,19 @@ function materialThumbnailStyle(itemId: ItemId): CSSProperties {
   };
 }
 
+function fixingThumbnailStyle(materialId: FixingMaterialId): CSSProperties {
+  const material = FIXING_MATERIALS[materialId];
+  const x = (material.column / 3) * 100;
+  const y = (material.row / 2) * 100;
+  return {
+    backgroundImage: "url(/assets/fixed-material-atlas-v1.png)",
+    backgroundPosition: `${x}% ${y}%`,
+    backgroundRepeat: "no-repeat",
+    backgroundSize: "400% 300%",
+    filter: "saturate(.62) brightness(.82) contrast(1.1) sepia(.08)",
+  };
+}
+
 function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
   const r = Math.min(radius, Math.abs(width) / 2, Math.abs(height) / 2);
   ctx.beginPath();
@@ -2882,6 +3504,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const endingMusicFadeRef = useRef<(() => void) | null>(null);
   const epilogueMusicFadeRef = useRef<(() => void) | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
+  const [inventoryView, setInventoryView] = useState<"building" | "fixing">("building");
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
   const [endingPhase, setEndingPhase] = useState<EndingPhase>("video");
@@ -3013,6 +3636,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
 
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
+  const availableFixings = Object.values(snapshot.fixingInventory).reduce((total, count) => total + count, 0);
   const inventoryItems = (Object.keys(ITEMS) as ItemId[]).filter((itemId) => level.inventory.includes(itemId));
 
   return (
@@ -3022,7 +3646,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
           <canvas
             ref={canvasRef}
             className="game-canvas"
-            aria-label="垃圾物理堆叠建造区"
+            aria-label="搭建物料与固定物料物理建造区"
             onPointerDown={(event) => {
               event.preventDefault();
               event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -3044,41 +3668,99 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               <span>{snapshot.status === "plucking" ? "正在摘取萌芽" : "机器人攀爬中"}</span><div><i style={{ width: `${snapshot.activationProgress * 100}%` }} /></div><b>{Math.round(snapshot.activationProgress * 100)}%</b>
             </div>
           )}
-          <aside className="inventory-panel panel" aria-label="垃圾物品列表">
-            <div className="inventory-head"><strong>垃圾物品</strong><span>{availablePieces}</span></div>
-            <div className="inventory-list">
-              {inventoryItems
-                .map((id) => {
-                  const item = ITEMS[id];
-                  const count = snapshot.inventory[id];
-                  const highlighted = snapshot.hint?.itemId === item.id;
+          {snapshot.status === "collapsing" && (
+            <div className="collapse-waiting" role="status" aria-live="assertive">
+              <span aria-hidden="true">⌁</span><b>结构正在坍落</b><small>残骸停稳后显示结果</small>
+            </div>
+          )}
+          <aside className="inventory-panel panel" aria-label="搭建与固定物料工具栏">
+            <div className="inventory-tabs" role="tablist" aria-label="物料类别">
+              <button
+                className={`inventory-tab ${inventoryView === "building" ? "active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={inventoryView === "building"}
+                onClick={() => {
+                  if (snapshot.heldFixing) gameRef.current?.selectFixingMaterial(snapshot.heldFixing);
+                  setInventoryView("building");
+                  audio.ui();
+                }}
+              >
+                搭建物料 <span className="inventory-tab-count">{availablePieces}</span>
+              </button>
+              <button
+                className={`inventory-tab ${inventoryView === "fixing" ? "active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={inventoryView === "fixing"}
+                onClick={() => { setInventoryView("fixing"); audio.ui(); }}
+              >
+                固定物料 <span className="inventory-tab-count">{availableFixings}</span>
+              </button>
+            </div>
+            {inventoryView === "building" ? (
+              <div className="inventory-view inventory-list" role="tabpanel" aria-label="搭建物料">
+                {inventoryItems
+                  .map((id) => {
+                    const item = ITEMS[id];
+                    const count = snapshot.inventory[id];
+                    const highlighted = snapshot.hint?.itemId === item.id;
+                    return (
+                      <button
+                        className={`material-card ${highlighted ? "recommended" : ""} ${count === 0 ? "depleted" : ""}`}
+                        type="button"
+                        key={item.id}
+                        disabled={!isInteractive || count === 0}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.currentTarget.setPointerCapture?.(event.pointerId);
+                          gameRef.current?.startHolding(item.id, event.clientX, event.clientY, event.pointerId);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          gameRef.current?.startHolding(item.id, rect.left + rect.width / 2, rect.top + rect.height / 2, -1);
+                        }}
+                        aria-label={`拖拽 ${item.name}，剩余 ${count} 件`}
+                      >
+                        <span className={`material-icon ${item.role}`} style={materialThumbnailStyle(item.id)} aria-hidden="true" />
+                        <span className="material-copy"><b>{item.name}</b></span>
+                        <span className="material-count">×{count}</span>
+                      </button>
+                    );
+                  })}
+                {Object.values(snapshot.inventory).every((count) => count === 0) && <p className="empty-inventory">搭建物料已经用完，建议重试。</p>}
+              </div>
+            ) : (
+              <div className="inventory-view inventory-list" role="tabpanel" aria-label="固定物料">
+                <p className={`fixing-helper ${snapshot.heldFixing ? "is-active" : ""}`}>
+                  {snapshot.heldFixing
+                    ? `已选择「${FIXING_MATERIALS[snapshot.heldFixing].name}」：在物件或地面上选择两个固定点。`
+                    : "选择固定材料，再连接两个物件，或把塔体锚定到地面。"}
+                </p>
+                {FIXING_MATERIAL_ORDER.map((id) => {
+                  const material = FIXING_MATERIALS[id];
+                  const count = snapshot.fixingInventory[id];
+                  const selected = snapshot.heldFixing === id;
                   return (
                     <button
-                      className={`material-card ${highlighted ? "recommended" : ""} ${count === 0 ? "depleted" : ""}`}
+                      className={`material-card fixing-card ${selected ? "selected" : ""} ${count === 0 ? "depleted" : ""}`}
                       type="button"
-                      key={item.id}
+                      key={id}
                       disabled={!isInteractive || count === 0}
-                      onPointerDown={(event) => {
-                        event.preventDefault();
-                        event.currentTarget.setPointerCapture?.(event.pointerId);
-                        gameRef.current?.startHolding(item.id, event.clientX, event.clientY, event.pointerId);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") return;
-                        event.preventDefault();
-                        const rect = event.currentTarget.getBoundingClientRect();
-                        gameRef.current?.startHolding(item.id, rect.left + rect.width / 2, rect.top + rect.height / 2, -1);
-                      }}
-                      aria-label={`拖拽 ${item.name}，剩余 ${count} 件`}
+                      aria-pressed={selected}
+                      aria-label={`${selected ? "取消" : "选择"}${material.name}，剩余 ${count} 件`}
+                      onClick={() => gameRef.current?.selectFixingMaterial(id)}
                     >
-                      <span className={`material-icon ${item.role}`} style={materialThumbnailStyle(item.id)} aria-hidden="true" />
-                      <span className="material-copy"><b>{item.name}</b></span>
+                      <span className="material-icon fixing" style={fixingThumbnailStyle(id)} aria-hidden="true" />
+                      <span className="material-copy"><b>{material.name}</b><small>{material.mode === "tie" ? "柔性拉结" : "刚性支撑"}</small></span>
                       <span className="material-count">×{count}</span>
                     </button>
                   );
                 })}
-              {Object.values(snapshot.inventory).every((count) => count === 0) && <p className="empty-inventory">物料已经用完，建议重试本关。</p>}
-            </div>
+              </div>
+            )}
           </aside>
           {snapshot.status === "failed" && (
             <div className="modal-scrim result-scrim">
@@ -3444,9 +4126,11 @@ export function DawnTowerGame() {
                 <article>
                   <h3>堆叠规则</h3>
                   <ol>
-                    <li>从右侧物品栏拖出垃圾，放入场景中的有效搭建区域。</li>
+                    <li>从右侧“搭建物料”拖出垃圾，放入场景中的有效搭建区域。</li>
                     <li>第一件物品可以直接落在地面；从第二件开始，必须堆放在上一件物品之上。</li>
                     <li>松手后物品会受到重力、碰撞和重心影响；已经放置的物品仍可拖动调整。</li>
+                    <li>切换到“固定物料”，选择一种材料后依次连接两个物件，或把物件锚定到地面；固定材料不受堆叠顺序限制。</li>
+                    <li>木板、铁板和钢筋可以拉压支撑；麻绳、钢丝、胶布、皮带等只在绷紧后承受拉力。材料均有自身重量与强度，超限会弯折或断裂。</li>
                     <li>每种废料具有接近现实的相对重量、摩擦稳定性与承重差异；承重强度统一按现实参考值强化至约 3 倍。</li>
                     <li>持续超出承重上限时，物件会先弯折、压瘪或开裂，随后摩擦与稳定性下降，并可能引发整体垮塌。</li>
                     <li>垃圾堆抵达吊篮下方的 99 米位置并保持稳定后，机器人会开始攀爬。</li>
@@ -3455,7 +4139,7 @@ export function DawnTowerGame() {
                   </ol>
                 </article>
                 <aside>
-                  失败条件：机器人抵达 99 米之前，非第一件物品掉落到地面，或垃圾堆在建造、攀爬过程中整体倒塌。失败提示会说明具体失稳原因。
+                  失败条件：机器人抵达 99 米之前，非第一件物品掉落到地面，或垃圾堆在建造、攀爬过程中整体倒塌。系统会先让残骸自然落地，待运动停稳后再说明具体失稳原因。
                 </aside>
               </div>
 

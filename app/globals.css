@@ -1256,6 +1256,235 @@ body {
   transform: scale(1);
 }
 
+/* Peer material modes share the existing inventory shell. */
+.minimal-game .inventory-tabs {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: -1px 0 0;
+  padding: 0 0 7px;
+  border-bottom: 1px solid rgba(220, 237, 211, .1);
+}
+
+.minimal-game .inventory-tab {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 17px 6px 6px;
+  border: 1px solid rgba(221, 235, 211, .13);
+  border-radius: 7px;
+  color: rgba(225, 235, 221, .69);
+  background: rgba(227, 239, 218, .035);
+  box-shadow: inset 0 1px rgba(255, 255, 246, .025);
+  font: inherit;
+  font-size: clamp(10px, .68vw, 11px);
+  font-weight: 700;
+  letter-spacing: .02em;
+  line-height: 1.15;
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.minimal-game .inventory-tab:hover:not(:disabled) {
+  color: rgba(242, 247, 232, .94);
+  border-color: rgba(213, 231, 184, .35);
+  background: rgba(198, 220, 170, .08);
+}
+
+.minimal-game .inventory-tab:focus-visible {
+  outline: 2px solid rgba(222, 239, 174, .72);
+  outline-offset: 2px;
+}
+
+.minimal-game .inventory-tab.active,
+.minimal-game .inventory-tab[aria-selected="true"] {
+  color: #f1f5e5;
+  border-color: rgba(221, 236, 174, .48);
+  background: linear-gradient(180deg, rgba(186, 208, 142, .16), rgba(120, 151, 112, .09));
+  box-shadow: inset 0 -2px rgba(220, 233, 160, .52), inset 0 1px rgba(255, 255, 242, .07);
+}
+
+.minimal-game .inventory-tab:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.minimal-game .inventory-tab-count {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: inline-grid;
+  min-width: 14px;
+  min-height: 14px;
+  place-items: center;
+  padding: 0 2px;
+  border: 1px solid rgba(220, 239, 176, .2);
+  border-radius: 999px;
+  color: rgba(239, 246, 221, .86);
+  background: rgba(120, 154, 94, .22);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.minimal-game .inventory-view {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.minimal-game .inventory-view.inventory-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.minimal-game .inventory-view[hidden] { display: none; }
+.minimal-game .inventory-view .inventory-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.minimal-game .fixing-card {
+  cursor: pointer;
+}
+
+.minimal-game .fixing-card.selected,
+.minimal-game .fixing-card[aria-pressed="true"] {
+  border-color: rgba(225, 214, 143, .76);
+  color: #f6f3dc;
+  background: linear-gradient(105deg, rgba(199, 177, 103, .18), rgba(111, 150, 111, .11));
+  box-shadow: inset 3px 0 rgba(226, 202, 119, .74), inset 0 1px rgba(255, 255, 244, .07);
+}
+
+.minimal-game .fixing-card.selected .material-icon,
+.minimal-game .fixing-card[aria-pressed="true"] .material-icon {
+  border-color: rgba(233, 218, 154, .55);
+  background-color: rgba(83, 76, 52, .72);
+  box-shadow: inset 0 0 13px rgba(229, 193, 105, .09);
+}
+
+.minimal-game .fixing-helper {
+  flex: 0 0 auto;
+  margin: 6px 0 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(214, 231, 200, .12);
+  border-left-color: rgba(220, 207, 139, .5);
+  border-radius: 6px;
+  color: rgba(221, 231, 214, .67);
+  background: rgba(2, 12, 13, .26);
+  font-size: clamp(9px, .62vw, 10px);
+  line-height: 1.48;
+}
+
+.minimal-game .fixing-helper strong {
+  display: block;
+  margin-bottom: 2px;
+  color: rgba(241, 242, 218, .9);
+  font-size: inherit;
+}
+
+.minimal-game .fixing-helper.is-active {
+  color: rgba(236, 239, 219, .82);
+  border-color: rgba(222, 207, 135, .27);
+  border-left-color: rgba(231, 207, 119, .72);
+  background: rgba(129, 112, 62, .1);
+}
+
+.minimal-game .collapse-waiting {
+  position: absolute;
+  z-index: 6;
+  left: calc((100% - var(--game-rail-width) - 7px) / 2);
+  bottom: 14px;
+  display: inline-flex;
+  max-width: min(360px, calc(100% - var(--game-rail-width) - 34px));
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 1px solid rgba(228, 220, 165, .25);
+  border-radius: 8px;
+  color: rgba(242, 242, 220, .9);
+  background: rgba(11, 25, 25, .88);
+  box-shadow: 0 7px 22px rgba(0, 0, 0, .2), inset 0 1px rgba(255, 255, 244, .05);
+  font-size: clamp(10px, .72vw, 12px);
+  line-height: 1.35;
+  text-align: left;
+  pointer-events: none;
+  transform: translateX(-50%);
+  backdrop-filter: blur(5px);
+}
+
+.minimal-game .collapse-waiting::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #ddca83;
+  box-shadow: 0 0 0 0 rgba(221, 202, 131, .34);
+  content: "";
+  animation: collapse-waiting-pulse 1.35s ease-out infinite;
+}
+
+@media (max-width: 600px) {
+  .minimal-game .inventory-tabs { gap: 3px; padding-bottom: 6px; }
+  .minimal-game .inventory-tab {
+    min-height: 34px;
+    padding: 5px 14px 5px 4px;
+    font-size: 10px;
+  }
+  .minimal-game .inventory-tab-count {
+    top: 2px;
+    right: 2px;
+    min-width: 13px;
+    min-height: 13px;
+    font-size: 7px;
+  }
+  .minimal-game .fixing-helper {
+    margin-top: 5px;
+    padding: 6px;
+    font-size: 9px;
+    line-height: 1.42;
+  }
+  .minimal-game .collapse-waiting {
+    left: calc((100% - var(--game-rail-width) - 7px) / 2);
+    bottom: 8px;
+    max-width: calc(100% - var(--game-rail-width) - 22px);
+    gap: 6px;
+    padding: 7px 9px;
+    font-size: 10px;
+  }
+}
+
+@media (max-height: 720px) {
+  .minimal-game .inventory-tab { min-height: 31px; padding-block: 4px; }
+  .minimal-game .fixing-helper {
+    max-height: 38px;
+    overflow: hidden;
+    padding-block: 5px;
+    line-height: 1.35;
+  }
+  .minimal-game .fixing-helper strong { display: inline; margin: 0 4px 0 0; }
+}
+
+@keyframes collapse-waiting-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(221, 202, 131, .34); opacity: .95; }
+  70%, 100% { box-shadow: 0 0 0 7px rgba(221, 202, 131, 0); opacity: .66; }
+}
+
 @keyframes game-scene-enter {
   from { opacity: 0; filter: brightness(.74); transform: scale(1.008); }
   to { opacity: 1; filter: brightness(1); transform: scale(1); }
@@ -1278,4 +1507,5 @@ body {
   .minimal-game.is-entering { animation-duration: 1ms; }
   .scene-loading-screen { animation-duration: 1ms; }
   .scene-loading-ring { animation-duration: 1.8s; }
+  .minimal-game .collapse-waiting::before { animation: none; }
 }
