@@ -177,12 +177,23 @@ interface FixAnchor {
   ground: boolean;
 }
 
+interface ClientBounds {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
 interface FixingDraft {
   materialId: FixingMaterialId;
   current: Matter.Vector;
+  phase: "placing-first" | "waiting-second" | "placing-second";
+  originBounds: ClientBounds;
   pointerId?: number;
   anchorA?: FixAnchor;
   anchorB?: FixAnchor;
+  candidate?: FixAnchor;
+  cancelPending?: boolean;
 }
 
 interface FixingBody extends Matter.Body {
@@ -929,21 +940,50 @@ class TowerPhysicsGame {
     this.emit(true);
   }
 
-  startHoldingFixing(materialId: FixingMaterialId, clientX: number, clientY: number, pointerId: number) {
+  startHoldingFixing(
+    materialId: FixingMaterialId,
+    clientX: number,
+    clientY: number,
+    pointerId: number,
+    originBounds: ClientBounds,
+  ) {
     if (this.status !== "building" || this.fixingInventory[materialId] <= 0) return;
     if (this.adjusting) this.releaseAdjustedBody();
     this.held = null;
     this.panning = null;
     const point = this.clientToWorld(clientX, clientY);
-    this.fixingDraft = { materialId, current: point, pointerId };
+    this.fixingDraft = {
+      materialId,
+      current: point,
+      phase: "placing-first",
+      originBounds,
+      pointerId,
+    };
     this.audio.pickup(ITEMS.pallet);
-    this.message = `正在拖拽「${FIXING_MATERIALS[materialId].name}」。先拖到物件或地面锁定第一个锚点，再继续拖到第二个位置。`;
+    this.message = `把「${FIXING_MATERIALS[materialId].name}」拖到搭建物或地面，松手锁定第一个锚点。`;
     this.emit(true);
   }
 
   beginCanvasInteraction(clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building") return;
     const point = this.clientToWorld(clientX, clientY);
+    if (this.fixingDraft?.phase === "waiting-second") {
+      this.fixingDraft.phase = "placing-second";
+      this.fixingDraft.pointerId = pointerId;
+      this.fixingDraft.current = point;
+      this.fixingDraft.anchorB = undefined;
+      this.fixingDraft.candidate = undefined;
+      this.fixingDraft.cancelPending = false;
+      this.updateFixingDraft(
+        point,
+        this.isClientInsideDropZone(clientX, clientY),
+        clientX,
+        clientY,
+      );
+      this.message = "第二个锚点拖拽中：移动到另一个物件或地面，松手完成固定。";
+      this.emit(true);
+      return;
+    }
     if (this.held) {
       this.held.x = point.x;
       this.held.y = point.y;
@@ -1142,7 +1182,12 @@ class TowerPhysicsGame {
     event.preventDefault();
     if (fixing && this.fixingDraft) {
       const point = this.clientToWorld(event.clientX, event.clientY);
-      this.updateFixingDraft(point, this.isClientInsideDropZone(event.clientX, event.clientY));
+      this.updateFixingDraft(
+        point,
+        this.isClientInsideDropZone(event.clientX, event.clientY),
+        event.clientX,
+        event.clientY,
+      );
       return;
     }
     if (panning && this.panning) {
@@ -1173,7 +1218,7 @@ class TowerPhysicsGame {
       event.preventDefault();
       const point = this.clientToWorld(event.clientX, event.clientY);
       const inDropZone = this.isClientInsideDropZone(event.clientX, event.clientY);
-      this.finishFixingDrop(point, inDropZone);
+      this.finishFixingDrop(point, inDropZone, event.clientX, event.clientY);
       return;
     }
     if (this.panning?.pointerId === event.pointerId) {
@@ -1212,8 +1257,18 @@ class TowerPhysicsGame {
   private readonly onPointerCancel = (event: PointerEvent) => {
     if (this.fixingDraft?.pointerId === event.pointerId) {
       event.preventDefault();
-      this.fixingDraft = null;
-      this.message = "固定材料拖拽已取消，数量不会消耗。";
+      if (this.fixingDraft.phase === "placing-second" && this.fixingDraft.anchorA) {
+        this.fixingDraft.phase = "waiting-second";
+        this.fixingDraft.pointerId = undefined;
+        this.fixingDraft.anchorB = undefined;
+        this.fixingDraft.candidate = undefined;
+        this.fixingDraft.cancelPending = false;
+        this.fixingDraft.current = this.anchorWorld(this.fixingDraft.anchorA);
+        this.message = "第二个锚点拖拽已中断，第一个锚点仍保留；可重新拖拽第二个位置。";
+      } else {
+        this.fixingDraft = null;
+        this.message = "固定材料拖拽已取消，数量不会消耗。";
+      }
       this.emit(true);
       return;
     }
@@ -1251,56 +1306,115 @@ class TowerPhysicsGame {
     }
   };
 
-  private finishFixingDrop(point: Matter.Vector, inDropZone: boolean) {
+  private finishFixingDrop(
+    point: Matter.Vector,
+    inDropZone: boolean,
+    clientX: number,
+    clientY: number,
+  ) {
     const draft = this.fixingDraft;
     if (!draft) return;
-    this.updateFixingDraft(point, inDropZone);
+    const returnedToOrigin = this.isClientInsideBounds(clientX, clientY, draft.originBounds);
+    this.updateFixingDraft(point, inDropZone, clientX, clientY);
     const materialId = draft.materialId;
-    const anchorA = draft.anchorA;
-    const anchorB = draft.anchorB;
-    this.fixingDraft = null;
-    if (!inDropZone) {
-      this.message = "固定材料没有进入建造区，数量不会消耗。";
+
+    if (returnedToOrigin) {
+      this.fixingDraft = null;
+      this.message = `「${FIXING_MATERIALS[materialId].name}」已放回原物料栏，本次固定取消且不消耗数量。`;
       this.emit(true);
       return;
     }
-    if (!anchorA || !anchorB) {
-      this.message = anchorA
-        ? `没有锁定第二个锚点。「${FIXING_MATERIALS[materialId].name}」未被消耗，请从第一个物件继续拖到另一个物件或地面后再松手。`
-        : `没有找到第一个锚点。「${FIXING_MATERIALS[materialId].name}」未被消耗，请先拖到搭建物或地面。`;
+
+    if (draft.phase === "placing-first") {
+      const first = inDropZone ? this.findNearestFixAnchor(point) : null;
+      if (!first) {
+        this.fixingDraft = null;
+        this.message = inDropZone
+          ? `没有找到可固定的受力面。「${FIXING_MATERIALS[materialId].name}」未被消耗。`
+          : "固定材料没有进入有效建造区，数量不会消耗。";
+        this.emit(true);
+        return;
+      }
+      draft.anchorA = first;
+      draft.anchorB = undefined;
+      draft.candidate = undefined;
+      draft.cancelPending = false;
+      draft.phase = "waiting-second";
+      draft.pointerId = undefined;
+      draft.current = this.anchorWorld(first);
+      this.message = "第一个锚点已吸附。现在从场景中按住并拖向另一个物件或地面，松手完成固定。";
       this.emit(true);
       return;
     }
-    this.createFixingLink(materialId, anchorA, anchorB);
+
+    if (draft.phase !== "placing-second" || !draft.anchorA) return;
+    const second = inDropZone
+      ? this.findNearestFixAnchor(point, draft.anchorA.body.id)
+      : null;
+    const validSecond = second
+      && this.fixingAnchorsWithinRange(materialId, draft.anchorA, second)
+      ? second
+      : null;
+    if (!validSecond) {
+      draft.phase = "waiting-second";
+      draft.pointerId = undefined;
+      draft.anchorB = undefined;
+      draft.candidate = undefined;
+      draft.cancelPending = false;
+      draft.current = this.anchorWorld(draft.anchorA);
+      this.message = inDropZone
+        ? `第二个位置没有可用锚点，或超出「${FIXING_MATERIALS[materialId].name}」长度；第一个锚点已保留，请重新拖拽。`
+        : "第二个锚点未进入有效建造区；第一个锚点已保留，请重新拖拽。";
+      this.emit(true);
+      return;
+    }
+    draft.anchorB = validSecond;
+    this.createFixingLink(materialId, draft.anchorA, validSecond);
   }
 
-  private updateFixingDraft(point: Matter.Vector, inDropZone: boolean) {
+  private updateFixingDraft(
+    point: Matter.Vector,
+    inDropZone: boolean,
+    clientX: number,
+    clientY: number,
+  ) {
     const draft = this.fixingDraft;
     if (!draft) return;
-    const previousCount = draft.anchorB ? 2 : draft.anchorA ? 1 : 0;
+    const previousCandidate = draft.candidate?.body.id;
+    const previousCancel = Boolean(draft.cancelPending);
     draft.current = point;
     draft.anchorB = undefined;
+    draft.candidate = undefined;
+    draft.cancelPending = this.isClientInsideBounds(clientX, clientY, draft.originBounds);
 
-    if (inDropZone) {
-      if (!draft.anchorA) {
-        const first = this.findNearestFixAnchor(point);
-        if (first) draft.anchorA = first;
-      } else {
+    if (inDropZone && !draft.cancelPending) {
+      if (draft.phase === "placing-first") {
+        draft.candidate = this.findNearestFixAnchor(point) ?? undefined;
+      } else if (draft.phase === "placing-second" && draft.anchorA) {
         const second = this.findNearestFixAnchor(point, draft.anchorA.body.id);
         if (second && this.fixingAnchorsWithinRange(draft.materialId, draft.anchorA, second)) {
-          draft.anchorB = second;
+          draft.candidate = second;
         }
       }
     }
 
-    const nextCount = draft.anchorB ? 2 : draft.anchorA ? 1 : 0;
-    if (nextCount === previousCount) return;
-    this.message = nextCount === 2
-      ? "两个锚点已就绪，松手即可完成固定。"
-      : nextCount === 1
-        ? "第一个锚点已锁定，继续拖到另一个搭建物或地面。"
-        : "拖到搭建物或地面以锁定第一个锚点。";
+    const nextCandidate = draft.candidate?.body.id;
+    if (previousCandidate === nextCandidate && previousCancel === Boolean(draft.cancelPending)) return;
+    this.message = draft.cancelPending
+      ? "松手将放回原物料栏并取消本次固定。"
+      : draft.phase === "placing-first"
+        ? draft.candidate
+          ? "已找到第一个受力面，松手锁定锚点。"
+          : "移动到搭建物或地面，松手锁定第一个锚点。"
+        : draft.candidate
+          ? "第二个锚点已吸附，松手完成固定。"
+          : "拖向另一个搭建物或地面，虚线将提示连接方向。";
     this.emit(true);
+  }
+
+  private isClientInsideBounds(clientX: number, clientY: number, bounds: ClientBounds) {
+    return clientX >= bounds.left && clientX <= bounds.right
+      && clientY >= bounds.top && clientY <= bounds.bottom;
   }
 
   private distanceToBodyBounds(point: Matter.Vector, body: Matter.Body) {
@@ -2959,22 +3073,40 @@ class TowerPhysicsGame {
     const definition = FIXING_MATERIALS[draft.materialId];
     const previewLength = clamp((definition.minLength + definition.maxLength) * PIXELS_PER_METER * 0.34, 44, 86);
     const hasFirst = Boolean(draft.anchorA);
-    const valid = Boolean(draft.anchorA && draft.anchorB);
+    const valid = Boolean(draft.anchorA && draft.candidate && draft.phase === "placing-second");
     const start = draft.anchorA
       ? this.anchorWorld(draft.anchorA)
       : { x: draft.current.x - previewLength / 2, y: draft.current.y };
-    const end = draft.anchorB
-      ? this.anchorWorld(draft.anchorB)
+    const end = draft.candidate
+      ? this.anchorWorld(draft.candidate)
       : hasFirst
         ? draft.current
         : { x: draft.current.x + previewLength / 2, y: draft.current.y };
     const ctx = this.context;
     ctx.save();
     ctx.lineCap = "round";
+    if (draft.phase === "waiting-second" && draft.anchorA) {
+      ctx.fillStyle = "rgba(199, 228, 157, .2)";
+      ctx.beginPath();
+      ctx.arc(start.x, start.y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(213, 238, 176, .95)";
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(start.x, start.y, 5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
     const width = Math.max(2.4, definition.width * PIXELS_PER_METER * 0.74);
-    const usedTexture = this.drawStraightFixingTexture(draft.materialId, start, end, width, valid ? 0.9 : 0.5);
+    const previewOpacity = draft.cancelPending ? 0.2 : valid ? 0.9 : 0.5;
+    const usedTexture = this.drawStraightFixingTexture(draft.materialId, start, end, width, previewOpacity);
     if (!usedTexture) {
-      ctx.strokeStyle = valid ? "rgba(177, 219, 133, .78)" : "rgba(236, 177, 103, .64)";
+      ctx.strokeStyle = draft.cancelPending
+        ? "rgba(205, 107, 91, .55)"
+        : valid
+          ? "rgba(177, 219, 133, .78)"
+          : "rgba(236, 177, 103, .64)";
       ctx.lineWidth = width;
       ctx.beginPath();
       ctx.moveTo(start.x, start.y);
@@ -2983,7 +3115,11 @@ class TowerPhysicsGame {
     }
     if (hasFirst) {
       ctx.setLineDash([7, 5]);
-      ctx.strokeStyle = valid ? "rgba(198, 231, 159, .98)" : "rgba(240, 184, 107, .96)";
+      ctx.strokeStyle = draft.cancelPending
+        ? "rgba(226, 116, 94, .95)"
+        : valid
+          ? "rgba(198, 231, 159, .98)"
+          : "rgba(240, 184, 107, .96)";
       ctx.lineWidth = 1.8;
       ctx.beginPath();
       ctx.moveTo(start.x, start.y);
@@ -2993,7 +3129,7 @@ class TowerPhysicsGame {
     }
     [start, end].forEach((point, index) => {
       const locked = index === 0 ? hasFirst : valid;
-      ctx.fillStyle = locked ? "#c7e49d" : "#e2a96e";
+      ctx.fillStyle = draft.cancelPending ? "#d66f5e" : locked ? "#c7e49d" : "#e2a96e";
       ctx.beginPath();
       ctx.arc(point.x, point.y, locked ? 4.2 : 3.2, 0, Math.PI * 2);
       ctx.fill();
@@ -3927,10 +4063,18 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                       key={id}
                       disabled={!isInteractive || count === 0}
                       aria-label={`拖拽${material.name}依次锁定两个锚点，剩余 ${count} 件`}
+                      aria-pressed={dragging}
                       onPointerDown={(event) => {
                         event.preventDefault();
                         event.currentTarget.setPointerCapture?.(event.pointerId);
-                        gameRef.current?.startHoldingFixing(id, event.clientX, event.clientY, event.pointerId);
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        gameRef.current?.startHoldingFixing(
+                          id,
+                          event.clientX,
+                          event.clientY,
+                          event.pointerId,
+                          { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
+                        );
                       }}
                     >
                       <span className="material-icon fixing" style={fixingThumbnailStyle(id)} aria-hidden="true" />

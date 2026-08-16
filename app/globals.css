@@ -816,14 +816,15 @@ body {
   display: grid;
   width: min(100%, 380px);
   min-height: 146px;
-  gap: 0;
+  gap: 10px;
   align-content: end;
   justify-items: center;
+  margin-bottom: clamp(10px, 1.8svh, 20px);
   animation: launch-rise 750ms 180ms cubic-bezier(.16, .9, .24, 1) both;
 }
 .launch-start {
   position: relative;
-  width: 100%;
+  width: 80%;
   min-height: 0;
   aspect-ratio: 1159 / 339;
   overflow: visible;
@@ -872,9 +873,9 @@ body {
 .launch-guide-button {
   position: relative;
   z-index: 1;
-  width: calc(100% - 48px);
+  width: 80%;
   min-height: 42px;
-  margin-top: -4px;
+  margin-top: 0;
   border: 1px solid rgba(204, 224, 185, 0.34);
   border-radius: 8px;
   color: rgba(235, 243, 225, 0.78);
