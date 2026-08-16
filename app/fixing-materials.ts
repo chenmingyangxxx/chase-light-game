@@ -5,7 +5,6 @@ export type FixingMaterialId =
   | "ironPlate"
   | "rebar"
   | "ductTape"
-  | "umbrella"
   | "leatherBelt"
   | "ratchetStrap"
   | "chain"
@@ -163,26 +162,6 @@ export const FIXING_MATERIALS: Readonly<
     row: 1,
     quantity: 4,
   },
-  umbrella: {
-    id: "umbrella",
-    name: "折断的雨伞骨",
-    shortName: "伞骨",
-    mode: "brace",
-    massKg: 1.2,
-    tensileN: 1_200,
-    compressiveN: 800,
-    shearN: 500,
-    stiffness: 0.28,
-    damping: 0.2,
-    maxStrain: 0.1,
-    minLength: 0.35,
-    maxLength: 1.4,
-    width: 0.3,
-    failureLabel: "伞骨已折断",
-    column: 2,
-    row: 1,
-    quantity: 2,
-  },
   leatherBelt: {
     id: "leatherBelt",
     name: "磨损皮带",
@@ -292,7 +271,6 @@ export const FIXING_MATERIAL_ORDER = [
   "ironPlate",
   "rebar",
   "ductTape",
-  "umbrella",
   "leatherBelt",
   "ratchetStrap",
   "chain",
