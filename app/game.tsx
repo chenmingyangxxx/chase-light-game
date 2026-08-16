@@ -36,11 +36,12 @@ const GOAL_REACH_Y = BASE_Y - GOAL_REACH_HEIGHT * PIXELS_PER_METER;
 const GOAL_BASKET_Y = GOAL_REACH_Y - 86;
 const GOAL_RIG_TOP_Y = GOAL_BASKET_Y - 180;
 const GOAL_REACH_HALF_WIDTH = 139;
-// The basket artwork ends exactly at the 99 m line. A slim hidden collision
-// beam under that rail prevents tall props from visually piercing the basket
-// while still allowing their top edge to satisfy the goal height.
-const GOAL_BASKET_STOP_WIDTH = 174;
-const GOAL_BASKET_STOP_HEIGHT = 12;
+// The suspended basket is a visual goal, never a construction surface. Keep a
+// small no-build volume around the complete cage; the lower edge remains the
+// exact 99 m line so a tower may reach it without entering the basket.
+const GOAL_BASKET_FORBIDDEN_HALF_WIDTH = 84;
+const GOAL_BASKET_FORBIDDEN_TOP = GOAL_BASKET_Y - 88;
+const GOAL_BASKET_FORBIDDEN_BOTTOM = GOAL_REACH_Y;
 // The deliberate 22 second ascent is 50% slower than the previous version.
 // Short grip holds inside each step keep the reduced speed feeling purposeful
 // instead of like a uniformly slowed video.
@@ -890,6 +891,7 @@ class TowerPhysicsGame {
   private collapseStartedAt = 0;
   private collapseSettleElapsed = 0;
   private groundContacts = new Map<number, number>();
+  private itemContacts = new Map<string, number>();
   private structuralLoadKg = new Map<number, number>();
   private hintIndex = 0;
   private hintsLeft = 3;
@@ -1180,6 +1182,7 @@ class TowerPhysicsGame {
     this.fixingDraft = null;
     this.nextFixingId = 1;
     this.groundContacts.clear();
+    this.itemContacts.clear();
     this.structuralLoadKg.clear();
     this.held = null;
     this.adjusting = null;
@@ -1223,6 +1226,7 @@ class TowerPhysicsGame {
     Events.on(engine, "collisionStart", (event) => {
       event.pairs.forEach((pair) => {
         this.trackGroundContact(pair.bodyA, pair.bodyB, 1);
+        this.trackItemContact(pair.bodyA, pair.bodyB, 1);
         const bodyA = pair.bodyA as TaggedBody & FixingBody;
         const bodyB = pair.bodyB as TaggedBody & FixingBody;
         if (!bodyA.gameItem && !bodyB.gameItem && !bodyA.gameFixingId && !bodyB.gameFixingId) return;
@@ -1232,7 +1236,10 @@ class TowerPhysicsGame {
       });
     });
     Events.on(engine, "collisionEnd", (event) => {
-      event.pairs.forEach((pair) => this.trackGroundContact(pair.bodyA, pair.bodyB, -1));
+      event.pairs.forEach((pair) => {
+        this.trackGroundContact(pair.bodyA, pair.bodyB, -1);
+        this.trackItemContact(pair.bodyA, pair.bodyB, -1);
+      });
     });
     return engine;
   }
@@ -1245,6 +1252,18 @@ class TowerPhysicsGame {
     const next = Math.max(0, (this.groundContacts.get(itemBody.id) ?? 0) + delta);
     if (next === 0) this.groundContacts.delete(itemBody.id);
     else this.groundContacts.set(itemBody.id, next);
+  }
+
+  private itemContactKey(bodyA: Matter.Body, bodyB: Matter.Body) {
+    return bodyA.id < bodyB.id ? `${bodyA.id}:${bodyB.id}` : `${bodyB.id}:${bodyA.id}`;
+  }
+
+  private trackItemContact(bodyA: Matter.Body, bodyB: Matter.Body, delta: 1 | -1) {
+    if (!(bodyA as TaggedBody).gameItem || !(bodyB as TaggedBody).gameItem) return;
+    const key = this.itemContactKey(bodyA, bodyB);
+    const next = Math.max(0, (this.itemContacts.get(key) ?? 0) + delta);
+    if (next === 0) this.itemContacts.delete(key);
+    else this.itemContacts.set(key, next);
   }
 
   private createWorld() {
@@ -1263,21 +1282,12 @@ class TowerPhysicsGame {
     });
     const leftWall = Bodies.rectangle(groundLeft + 16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
     const rightWall = Bodies.rectangle(groundRight - 16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
-    const basketStop = Bodies.rectangle(
-      GOAL_BASKET_X,
-      GOAL_REACH_Y - GOAL_BASKET_STOP_HEIGHT / 2,
-      GOAL_BASKET_STOP_WIDTH,
-      GOAL_BASKET_STOP_HEIGHT,
-      {
-        isStatic: true,
-        friction: 0.9,
-        frictionStatic: 1,
-        restitution: 0,
-        label: "goal-basket-stop",
-      },
-    );
     this.baseBody = base;
-    World.add(this.engine.world, [base, recoveryFloor, leftWall, rightWall, basketStop]);
+    // Do not give the basket a Matter body: a hidden static ledge allowed junk
+    // to rest inside the cage and also broke the real ground-supported tower
+    // chain used by the 99 m trigger. Placement guards below protect the cage
+    // without letting it carry any load.
+    World.add(this.engine.world, [base, recoveryFloor, leftWall, rightWall]);
   }
 
   private readonly onPointerMove = (event: PointerEvent) => {
@@ -1317,6 +1327,10 @@ class TowerPhysicsGame {
     const dropZone = this.dropZoneWorldBounds();
     const x = clamp(point.x - adjusted.offsetX, dropZone.left + halfWidth + 3, dropZone.right - halfWidth - 3);
     const y = clamp(point.y - adjusted.offsetY, 52, BASE_Y - halfHeight);
+    if (item && this.itemIntersectsBasket(item, x, y, adjusted.body.angle)) {
+      this.message = "吊篮是任务目标，不能把搭建物料移入其中。请把物件放在吊篮下方。";
+      return;
+    }
     Body.setPosition(adjusted.body, { x, y });
     Body.setVelocity(adjusted.body, { x: 0, y: 0 });
     Body.setAngularVelocity(adjusted.body, 0);
@@ -1555,6 +1569,7 @@ class TowerPhysicsGame {
   }
 
   private findNearestFixAnchor(point: Matter.Vector, excludedBodyId?: number): FixAnchor | null {
+    if (this.pointInsideBasketForbiddenArea(point)) return null;
     const snapRadius = 72;
     const groundSnapRadius = 76;
     const dropBounds = this.dropZoneWorldBounds();
@@ -1633,7 +1648,57 @@ class TowerPhysicsGame {
     // The tower is 99 m tall while real discarded straps are authored at a
     // smaller visual scale. Any two distinct useful points are connectable;
     // material strength, stretch and breakage still decide whether it holds.
-    return anchorA.body.id !== anchorB.body.id && distance >= 4;
+    return anchorA.body.id !== anchorB.body.id
+      && distance >= 4
+      && !this.segmentCrossesBasketForbiddenArea(worldA, worldB);
+  }
+
+  private basketForbiddenBounds() {
+    return {
+      left: GOAL_BASKET_X - GOAL_BASKET_FORBIDDEN_HALF_WIDTH,
+      right: GOAL_BASKET_X + GOAL_BASKET_FORBIDDEN_HALF_WIDTH,
+      top: GOAL_BASKET_FORBIDDEN_TOP,
+      bottom: GOAL_BASKET_FORBIDDEN_BOTTOM,
+    };
+  }
+
+  private pointInsideBasketForbiddenArea(point: Matter.Vector) {
+    const basket = this.basketForbiddenBounds();
+    return point.x > basket.left && point.x < basket.right
+      && point.y > basket.top && point.y < basket.bottom;
+  }
+
+  private itemIntersectsBasket(item: ItemDefinition, x: number, y: number, angle: number) {
+    const basket = this.basketForbiddenBounds();
+    const halfWidth = item.width / 2;
+    const halfHeight = item.height / 2;
+    const cosine = Math.abs(Math.cos(angle));
+    const sine = Math.abs(Math.sin(angle));
+    const extentX = item.shape === "circle" ? halfWidth : cosine * halfWidth + sine * halfHeight;
+    const extentY = item.shape === "circle" ? halfHeight : sine * halfWidth + cosine * halfHeight;
+    return x + extentX > basket.left
+      && x - extentX < basket.right
+      && y + extentY > basket.top
+      && y - extentY < basket.bottom;
+  }
+
+  private segmentCrossesBasketForbiddenArea(start: Matter.Vector, end: Matter.Vector) {
+    const basket = this.basketForbiddenBounds();
+    const deltaX = end.x - start.x;
+    const deltaY = end.y - start.y;
+    let minimum = 0;
+    let maximum = 1;
+    const clip = (direction: number, distance: number) => {
+      if (Math.abs(direction) < 0.0001) return distance >= 0;
+      const amount = distance / direction;
+      if (direction < 0) minimum = Math.max(minimum, amount);
+      else maximum = Math.min(maximum, amount);
+      return minimum <= maximum;
+    };
+    return clip(-deltaX, start.x - basket.left)
+      && clip(deltaX, basket.right - start.x)
+      && clip(-deltaY, start.y - basket.top)
+      && clip(deltaY, basket.bottom - start.y);
   }
 
   private makeFixAnchor(body: Matter.Body, world: Matter.Vector, ground: boolean): FixAnchor {
@@ -1847,6 +1912,12 @@ class TowerPhysicsGame {
     const dropZone = this.dropZoneWorldBounds();
     const dropX = clamp(x, dropZone.left + item.width / 2 + 3, dropZone.right - item.width / 2 - 3);
     const dropY = clamp(y, halfHeight + 8, BASE_Y - halfHeight - 3);
+    if (this.itemIntersectsBasket(item, dropX, dropY, this.held.angle)) {
+      this.held = null;
+      this.message = "吊篮内及其结构范围禁止放置搭建物料。请在吊篮下方完成 99 米高塔。";
+      this.emit(true);
+      return;
+    }
     const body = this.makeBody(item, dropX, dropY, this.held.angle);
     this.dynamicBodies.push(body);
     World.add(this.engine.world, body);
@@ -1961,6 +2032,19 @@ class TowerPhysicsGame {
     }
     const supportGraph = this.supportGraph();
     const towerBodies = supportGraph.bodies;
+    const currentHeight = this.measureHeight(towerBodies);
+    this.height = currentHeight;
+
+    // Reaching 99 m with a real ground-supported stack must win the race
+    // against stress/fracture processing in this same physics frame. The
+    // robot's climb remains the load test after activation, but a valid reach
+    // may no longer be reported as a pre-climb structural failure.
+    const hasRealStack = towerBodies.some((body) => (supportGraph.depth.get(body) ?? 0) >= 2);
+    if (this.status === "building" && hasRealStack && this.hasReachedRequiredHeight(towerBodies, supportGraph.depth)) {
+      this.activateLight();
+      if (this.status === "activating") return;
+    }
+
     this.updateStructuralStress(supportGraph, delta);
     // updateStructuralStress can queue a collapse through fail(). Checking the
     // pending reason avoids relying on TypeScript to infer a class-field state
@@ -1976,16 +2060,15 @@ class TowerPhysicsGame {
       });
     }
 
-    const currentHeight = this.measureHeight(supportGraph.bodies);
-    this.height = currentHeight;
     if (this.status === "building" && currentHeight > this.cameraAutoFollowPeakHeight + 0.35) {
       // A downward manual inspection must not hide newly added material. Once
       // the tower grows, the automatic camera regains priority and follows it.
       this.cameraManualOffsetY = Math.max(0, this.cameraManualOffsetY);
       this.cameraAutoFollowPeakHeight = currentHeight;
     }
-    const settledBodies = this.dynamicBodies.filter((body) => !this.isFallen(body));
-    const stable = !this.adjusting && towerBodies.length > 0 && settledBodies.every((body) => body.speed < 0.25 && Math.abs(body.angularVelocity) < 0.025);
+    // Only the connected tower determines its own stability. An unused piece
+    // elsewhere in the play area must not keep a valid 99 m tower waiting.
+    const stable = !this.adjusting && towerBodies.length > 0 && towerBodies.every((body) => body.speed < 0.25 && Math.abs(body.angularVelocity) < 0.025);
     if (stable) {
       this.stableElapsed += delta;
       if (this.stableElapsed > 620) this.stableHeight = Math.max(this.stableHeight, currentHeight);
@@ -2005,10 +2088,7 @@ class TowerPhysicsGame {
     } else {
       this.collapseElapsed = 0;
     }
-
     if (isClimbing) return;
-    const hasRealStack = towerBodies.some((body) => (supportGraph.depth.get(body) ?? 0) >= 2);
-    if (this.hasReachedRequiredHeight(towerBodies, supportGraph.depth) && hasRealStack && stable && this.stableElapsed > 1250) this.activateLight();
   }
 
   private towerBodies() {
@@ -2019,7 +2099,7 @@ class TowerPhysicsGame {
     const top = towerBodies
       .filter((body) => (depth.get(body) ?? 0) >= 2)
       .sort((a, b) => a.bounds.min.y - b.bounds.min.y)[0];
-    return Boolean(top && top.bounds.min.y <= GOAL_REACH_Y);
+    return Boolean(top && top.bounds.min.y <= GOAL_REACH_Y + 2);
   }
 
   private supportGraph() {
@@ -2175,7 +2255,10 @@ class TowerPhysicsGame {
     const overlap = Math.min(body.bounds.max.x, support.bounds.max.x) - Math.max(body.bounds.min.x, support.bounds.min.x);
     const narrowest = Math.min(body.bounds.max.x - body.bounds.min.x, support.bounds.max.x - support.bounds.min.x);
     const verticalGap = support.bounds.min.y - body.bounds.max.y;
-    return body.position.y < support.position.y - 2
+    const verticallyOrdered = body.position.y < support.position.y - 2;
+    const hasPhysicalContact = (this.itemContacts.get(this.itemContactKey(body, support)) ?? 0) > 0;
+    if (hasPhysicalContact && verticallyOrdered && overlap >= 2) return true;
+    return verticallyOrdered
       && overlap >= Math.max(4, narrowest * 0.32)
       // The small tolerance is intentionally tighter than Matter's default
       // resting slop: a stack now reads as physically touching instead of
