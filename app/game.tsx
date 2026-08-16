@@ -198,12 +198,14 @@ type RobotFrameBounds = readonly [left: number, top: number, right: number, bott
 // frames have uneven transparent margins, so one generic 96% foot pivot makes
 // the last climb poses jump upward and the pluck strip wobble sideways.
 const ROBOT_CLIMB_FRAME_BOUNDS: readonly RobotFrameBounds[] = [
-  [41, 93, 345, 693],
-  [45, 80, 355, 693],
-  [44, 82, 362, 693],
-  [0, 79, 362, 693],
-  [0, 46, 338, 644],
-  [16, 17, 332, 578],
+  [73, 60, 301, 484],
+  [52, 20, 314, 485],
+  [65, 24, 303, 491],
+  [63, 11, 308, 490],
+  [73, 35, 312, 475],
+  [89, 5, 344, 482],
+  [96, 9, 314, 477],
+  [76, 9, 321, 479],
 ];
 
 const ROBOT_PLUCK_FRAME_BOUNDS: readonly RobotFrameBounds[] = [
@@ -816,7 +818,7 @@ class TowerPhysicsGame {
       craneBoom: this.loadArtwork("/assets/crane-boom-cast-iron-v1.png"),
       goal: this.loadArtwork("/assets/crane-basket-sprout-v3.png"),
       goalEmpty: this.loadArtwork("/assets/crane-basket-soil-empty-v3.png"),
-      robotClimb: this.loadArtwork("/assets/robot-climb-frames-v2.png"),
+      robotClimb: this.loadArtwork("/assets/robot-climb-frames-v3.png"),
       robotPluck: this.loadArtwork("/assets/robot-pluck-grid-v4.png"),
     };
     this.createWorld();
@@ -2253,8 +2255,8 @@ class TowerPhysicsGame {
     if (this.status === "activating") {
       this.drawRobotFrameBlend(
         this.artwork.robotClimb,
-        6,
-        1,
+        4,
+        2,
         pose.frame,
         pose.nextFrame,
         pose.frameBlend,
@@ -2283,8 +2285,8 @@ class TowerPhysicsGame {
     if (pluckProgress < settleEnd) {
       this.drawRobotFrameBlend(
         this.artwork.robotClimb,
-        6,
-        1,
+        4,
+        2,
         this.frozenClimbFrame.frame,
         this.frozenClimbFrame.nextFrame,
         this.frozenClimbFrame.frameBlend,
@@ -2332,13 +2334,10 @@ class TowerPhysicsGame {
     const localStep = routePosition - routeIndex;
     const from = route[routeIndex] ?? route[0];
     const to = route[routeIndex + 1] ?? from;
-    // Each hold now has a full reach-and-pull cycle: the hands extend while
-    // the feet stay planted, the torso rises after the grip, then both feet
-    // settle before the next hold. Reversing the six-frame strip through the
-    // pull phase avoids the old 5 -> 2 hard jump at every route boundary.
-    const reach = localStep <= 0.48
-      ? smoothStep(localStep / 0.48)
-      : smoothStep((1 - localStep) / 0.52);
+    // The new two-row sheet follows the supplied video mechanics: each route
+    // segment is one complete four-pose reach, grip, pull and foot-settle
+    // sequence. Adjacent segments alternate sides instead of reversing the
+    // same reach poses, so hands and feet keep a natural climbing cadence.
     const travel = localStep < 0.38
       ? smoothStep(localStep / 0.38) * 0.14
       : 0.14 + smoothStep((localStep - 0.38) / 0.62) * 0.86;
@@ -2348,16 +2347,17 @@ class TowerPhysicsGame {
       y: from.y + (to.y - from.y) * travel - Math.sin(localStep * Math.PI) * 1.35,
       support: localStep < 0.52 ? from.support : to.support,
     };
-    const framePosition = clamp(reach * 5, 0, 5);
+    const sideFrame = routeIndex % 2 === 0 ? 0 : 4;
+    const framePosition = sideFrame + clamp(smoothStep(localStep) * 3, 0, 3);
     const frame = Math.floor(framePosition);
-    const nextFrame = Math.min(5, frame + 1);
+    const nextFrame = Math.min(sideFrame + 3, frame + 1);
     return {
       anchor,
       climb,
       frame,
       nextFrame,
       frameBlend: framePosition - frame,
-      flipX: routeIndex % 2 === 1,
+      flipX: false,
       routePosition,
       routeIndex,
       sequenceElapsed,
