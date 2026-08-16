@@ -2870,14 +2870,17 @@ type EndingPhase = "video" | "hold" | "fading" | "black" | "epilogue";
 
 const ENDING_LAST_FRAME_HOLD_MS = 500;
 const ENDING_FADE_TO_BLACK_MS = 850;
-const ENDING_BLACK_HOLD_MS = 2200;
+const ENDING_BLACK_HOLD_MS = 2000;
 
 function GameStage({ level, onExit, audio }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<TowerPhysicsGame | null>(null);
   const endingVideoRef = useRef<HTMLVideoElement>(null);
   const endingMusicRef = useRef<HTMLAudioElement>(null);
+  const epilogueVideoRef = useRef<HTMLVideoElement>(null);
+  const epilogueMusicRef = useRef<HTMLAudioElement>(null);
   const endingMusicFadeRef = useRef<(() => void) | null>(null);
+  const epilogueMusicFadeRef = useRef<(() => void) | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
@@ -2944,6 +2947,11 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
 
   useEffect(() => {
     if (!endingPlaying || endingPhase !== "fading") return;
+    const soundtrack = endingMusicRef.current;
+    if (soundtrack) {
+      endingMusicFadeRef.current?.();
+      endingMusicFadeRef.current = fadeMediaVolume(soundtrack, 0, ENDING_FADE_TO_BLACK_MS, true);
+    }
     const timer = window.setTimeout(() => setEndingPhase("black"), ENDING_FADE_TO_BLACK_MS);
     return () => window.clearTimeout(timer);
   }, [endingPhase, endingPlaying]);
@@ -2953,6 +2961,55 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
     const timer = window.setTimeout(() => setEndingPhase("epilogue"), ENDING_BLACK_HOLD_MS);
     return () => window.clearTimeout(timer);
   }, [endingPhase, endingPlaying]);
+
+  useEffect(() => {
+    if (!endingPlaying || endingPhase !== "epilogue") return;
+    const video = epilogueVideoRef.current;
+    const soundtrack = epilogueMusicRef.current;
+    if (!video || !soundtrack) return;
+    video.currentTime = 0;
+    soundtrack.currentTime = 0;
+    soundtrack.volume = 0.02;
+    epilogueMusicFadeRef.current?.();
+    void Promise.all([video.play(), soundtrack.play()])
+      .then(() => {
+        epilogueMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.68, 1400);
+      })
+      .catch(() => setEndingNeedsGesture(true));
+    return () => {
+      epilogueMusicFadeRef.current?.();
+      epilogueMusicFadeRef.current = null;
+    };
+  }, [endingPhase, endingPlaying]);
+
+  const retryEndingPlayback = () => {
+    setEndingNeedsGesture(false);
+    if (endingPhase === "epilogue") {
+      const videoPlayback = epilogueVideoRef.current?.play();
+      const soundtrack = epilogueMusicRef.current;
+      const soundtrackPlayback = soundtrack?.play();
+      const attempts = [videoPlayback, soundtrackPlayback].filter((attempt): attempt is Promise<void> => Boolean(attempt));
+      void Promise.all(attempts)
+        .then(() => {
+          if (!soundtrack) return;
+          epilogueMusicFadeRef.current?.();
+          epilogueMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.68, 900);
+        })
+        .catch(() => setEndingNeedsGesture(true));
+      return;
+    }
+    const videoPlayback = endingVideoRef.current?.play();
+    const soundtrack = endingMusicRef.current;
+    const soundtrackPlayback = soundtrack?.play();
+    const attempts = [videoPlayback, soundtrackPlayback].filter((attempt): attempt is Promise<void> => Boolean(attempt));
+    void Promise.all(attempts)
+      .then(() => {
+        if (!soundtrack) return;
+        endingMusicFadeRef.current?.();
+        endingMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.72, 900);
+      })
+      .catch(() => setEndingNeedsGesture(true));
+  };
 
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
@@ -3073,8 +3130,12 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
           )}
           {/* Instrumental score only: there is no spoken content to caption. */}
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio ref={endingMusicRef} loop preload="auto" aria-hidden="true">
+          <audio ref={endingMusicRef} preload="auto" aria-hidden="true">
             <source src="/assets/victory-ending-pingpong.wav" type="audio/wav" />
+          </audio>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio ref={epilogueMusicRef} loop preload="auto" aria-hidden="true">
+            <source src="/assets/ending-epilogue-country-v1.mp3" type="audio/mpeg" />
           </audio>
           {endingPlaying && (
             <div className={`ending-cinematic is-${endingPhase} ${endingReady ? "is-ready" : ""}`} aria-label="通关结尾">
@@ -3091,35 +3152,28 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               >
                 <source src="/assets/victory-ending.mp4" type="video/mp4" />
               </video>
-              {endingNeedsGesture && endingPhase === "video" && (
+              <video
+                ref={epilogueVideoRef}
+                className="ending-epilogue-video"
+                muted
+                loop
+                playsInline
+                preload="auto"
+                aria-hidden="true"
+              >
+                <source src="/assets/ending-epilogue-pingpong-v1.mp4" type="video/mp4" />
+              </video>
+              {endingNeedsGesture && (endingPhase === "video" || endingPhase === "epilogue") && (
                 <button
                   className="ending-play-button"
                   type="button"
-                  onClick={() => {
-                    setEndingNeedsGesture(false);
-                    const videoPlayback = endingVideoRef.current?.play();
-                    const soundtrack = endingMusicRef.current;
-                    const soundtrackPlayback = soundtrack?.play();
-                    const attempts = [videoPlayback, soundtrackPlayback].filter((attempt): attempt is Promise<void> => Boolean(attempt));
-                    void Promise.all(attempts)
-                      .then(() => {
-                        if (!soundtrack) return;
-                        endingMusicFadeRef.current?.();
-                        endingMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.72, 900);
-                      })
-                      .catch(() => setEndingNeedsGesture(true));
-                  }}
+                  onClick={retryEndingPlayback}
                 >
                   播放结局与音乐
                 </button>
               )}
               {endingPhase === "epilogue" && (
                 <>
-                  <img
-                    className="ending-epilogue-background"
-                    src="/assets/ending-epilogue-poster02.png"
-                    alt="阳光重返废墟，新生命在城市中生长"
-                  />
                   <div className="ending-wordmark" aria-label="追光">
                     <img src="/assets/chase-light-brush-wordmark.png" alt="追光" />
                     <p>以心筑塔，向光而生</p>
@@ -3132,13 +3186,20 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                       if (endingLeaving) return;
                       audio.ui();
                       setEndingLeaving(true);
-                      const soundtrack = endingMusicRef.current;
+                      const soundtrack = epilogueMusicRef.current;
                       if (soundtrack) {
-                        endingMusicFadeRef.current?.();
-                        endingMusicFadeRef.current = fadeMediaVolume(soundtrack, 0, 700, true);
+                        epilogueMusicFadeRef.current?.();
+                        epilogueMusicFadeRef.current = fadeMediaVolume(soundtrack, 0, 700, true);
                       }
                       window.setTimeout(() => {
-                        if (soundtrack) soundtrack.currentTime = 0;
+                        endingVideoRef.current?.pause();
+                        endingMusicRef.current?.pause();
+                        epilogueVideoRef.current?.pause();
+                        epilogueMusicRef.current?.pause();
+                        if (endingVideoRef.current) endingVideoRef.current.currentTime = 0;
+                        if (endingMusicRef.current) endingMusicRef.current.currentTime = 0;
+                        if (epilogueVideoRef.current) epilogueVideoRef.current.currentTime = 0;
+                        if (epilogueMusicRef.current) epilogueMusicRef.current.currentTime = 0;
                         setEndingPlaying(false);
                         setEndingPhase("video");
                         setEndingLeaving(false);

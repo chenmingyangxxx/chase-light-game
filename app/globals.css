@@ -584,6 +584,21 @@ body {
   object-position: center;
   background: #030708;
 }
+.ending-epilogue-video {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  background: #030708;
+  opacity: 0;
+  filter: brightness(.76) saturate(.9);
+  transform: scale(1.012);
+  transition: opacity 1.8s cubic-bezier(.22, .7, .2, 1), transform 2.2s cubic-bezier(.22, .7, .2, 1);
+}
 .ending-epilogue-background {
   position: absolute;
   z-index: 1;
@@ -1236,6 +1251,10 @@ body {
   opacity: 0;
   transition-duration: 850ms;
 }
+.ending-cinematic.is-epilogue .ending-epilogue-video {
+  opacity: 1;
+  transform: scale(1);
+}
 
 @keyframes game-scene-enter {
   from { opacity: 0; filter: brightness(.74); transform: scale(1.008); }
@@ -1254,7 +1273,8 @@ body {
   .launch-screen .launch-content,
   .ending-cinematic,
   .ending-cinematic::before,
-  .ending-cinematic-video { transition-duration: 1ms; }
+  .ending-cinematic-video,
+  .ending-epilogue-video { transition-duration: 1ms; }
   .minimal-game.is-entering { animation-duration: 1ms; }
   .scene-loading-screen { animation-duration: 1ms; }
   .scene-loading-ring { animation-duration: 1.8s; }
