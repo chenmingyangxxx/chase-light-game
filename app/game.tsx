@@ -956,7 +956,7 @@ class TowerPhysicsGame {
     this.artwork = {
       // These two complete-width paintings are the canonical gameplay pair.
       // Cover cropping adapts them to phone and desktop without stretching.
-      polluted: this.loadArtwork("/assets/wasteland-gameplay-polluted-full-v7.png"),
+      polluted: this.loadArtwork("/assets/wasteland-gameplay-polluted-full-v8.png"),
       revived: this.loadArtwork("/assets/wasteland-gameplay-revived-full-v7.png"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
@@ -4437,6 +4437,9 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                   <div className="ending-wordmark" aria-label="追光">
                     <img src="/assets/chase-light-brush-wordmark.png" alt="追光" />
                     <p>以心筑塔，向光而生</p>
+                    <div className="ending-music-playing" role="status" aria-label="音乐播放中">
+                      <span aria-hidden="true" />
+                    </div>
                   </div>
                   <button
                     className="ending-home-button"
