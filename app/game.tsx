@@ -36,6 +36,11 @@ const GOAL_REACH_Y = BASE_Y - GOAL_REACH_HEIGHT * PIXELS_PER_METER;
 const GOAL_BASKET_Y = GOAL_REACH_Y - 86;
 const GOAL_RIG_TOP_Y = GOAL_BASKET_Y - 180;
 const GOAL_REACH_HALF_WIDTH = 139;
+// The basket artwork ends exactly at the 99 m line. A slim hidden collision
+// beam under that rail prevents tall props from visually piercing the basket
+// while still allowing their top edge to satisfy the goal height.
+const GOAL_BASKET_STOP_WIDTH = 174;
+const GOAL_BASKET_STOP_HEIGHT = 12;
 // The deliberate 22 second ascent is 50% slower than the previous version.
 // Short grip holds inside each step keep the reduced speed feeling purposeful
 // instead of like a uniformly slowed video.
@@ -1254,8 +1259,21 @@ class TowerPhysicsGame {
     });
     const leftWall = Bodies.rectangle(groundLeft + 16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
     const rightWall = Bodies.rectangle(groundRight - 16, RECOVERY_Y - 10, 32, 180, { isStatic: true, label: "boundary" });
+    const basketStop = Bodies.rectangle(
+      GOAL_BASKET_X,
+      GOAL_REACH_Y - GOAL_BASKET_STOP_HEIGHT / 2,
+      GOAL_BASKET_STOP_WIDTH,
+      GOAL_BASKET_STOP_HEIGHT,
+      {
+        isStatic: true,
+        friction: 0.9,
+        frictionStatic: 1,
+        restitution: 0,
+        label: "goal-basket-stop",
+      },
+    );
     this.baseBody = base;
-    World.add(this.engine.world, [base, recoveryFloor, leftWall, rightWall]);
+    World.add(this.engine.world, [base, recoveryFloor, leftWall, rightWall, basketStop]);
   }
 
   private readonly onPointerMove = (event: PointerEvent) => {
@@ -1357,7 +1375,7 @@ class TowerPhysicsGame {
         this.fixingDraft.pointerId = undefined;
         this.fixingDraft.candidate = undefined;
         this.fixingDraft.cancelPending = false;
-        this.message = "第一个锚点选择被中断，固定物料仍保持选中；可重新点击搭建物料或地面。";
+        this.message = "第一个锚点选择被中断，辅助固定材料仍保持选中；可重新点击搭建物料或地面。";
       } else {
         this.fixingDraft = null;
         this.message = "固定材料拖拽已取消，数量不会消耗。";
@@ -1438,7 +1456,7 @@ class TowerPhysicsGame {
         draft.cancelPending = false;
         this.message = inDropZone
           ? `这里没有可固定的受力面。「${FIXING_MATERIALS[materialId].name}」仍保持选中，请点击搭建物料或地面。`
-          : "没有进入有效建造区；固定物料仍保持选中，请重新选择第一个锚点。";
+          : "没有进入有效建造区；辅助固定材料仍保持选中，请重新选择第一个锚点。";
         this.emit(true);
         return;
       }
@@ -2276,7 +2294,7 @@ class TowerPhysicsGame {
     this.status = "failed";
     this.audio.failure();
     this.message = this.pendingFailureReason
-      ?? "塔身最终失去支撑并倒塌。加宽底部并用固定物料分散受力，再试一次，你已经找到更稳的方向了！";
+      ?? "塔身最终失去支撑并倒塌。加宽底部并用辅助固定材料分散受力，再试一次，你已经找到更稳的方向了！";
     this.emit(true);
   }
 
@@ -3872,46 +3890,32 @@ function materialThumbnailStyle(itemId: ItemId): CSSProperties {
   };
 }
 
-function fixingThumbnailStyle(materialId: FixingMaterialId): CSSProperties {
-  const straightCell = materialId === "hempRope" ? 0 : materialId === "steelWire" ? 1 : materialId === "ductTape" ? 2 : null;
-  if (straightCell !== null) {
-    return {
-      backgroundImage: "url(/assets/fixed-material-straight-strip-v1.png)",
-      backgroundPosition: `${straightCell * 50}% 50%`,
-      backgroundRepeat: "no-repeat",
-      backgroundSize: "300% 100%",
-      filter: "saturate(.7) brightness(.82) contrast(1.12) sepia(.08)",
-    };
-  }
-  const stripTwoRow = materialId === "leatherBelt" ? 0 : materialId === "steelBand" ? 1 : materialId === "ratchetStrap" ? 2 : null;
-  if (stripTwoRow !== null) {
-    return {
-      backgroundImage: "url(/assets/fixed-material-straight-strip-v2.png)",
-      backgroundPosition: `50% ${stripTwoRow * 50}%`,
-      backgroundRepeat: "no-repeat",
-      backgroundSize: "100% 300%",
-      filter: "saturate(.7) brightness(.82) contrast(1.12) sepia(.08)",
-    };
-  }
-  const stripThreeRow = materialId === "rebar" ? 0 : materialId === "woodPlank" ? 1 : materialId === "ironPlate" ? 2 : null;
-  if (stripThreeRow !== null) {
-    return {
-      backgroundImage: "url(/assets/fixed-material-straight-strip-v3.png)",
-      backgroundPosition: `50% ${stripThreeRow * 50}%`,
-      backgroundRepeat: "no-repeat",
-      backgroundSize: "100% 300%",
-      filter: "saturate(.7) brightness(.82) contrast(1.12) sepia(.08)",
-    };
-  }
-  const material = FIXING_MATERIALS[materialId];
-  const x = (material.column / 3) * 100;
-  const y = (material.row / 2) * 100;
+const FIXING_THUMBNAIL_SOURCE_SIZE = 1280;
+const FIXING_THUMBNAIL_BOUNDS: Readonly<Record<FixingMaterialId, readonly [number, number, number, number]>> = {
+  woodPlank: [55, 30, 158, 426],
+  hempRope: [290, 93, 302, 348],
+  steelWire: [641, 90, 337, 365],
+  ironPlate: [1018, 69, 181, 352],
+  rebar: [0, 650, 304, 62],
+  ductTape: [330, 588, 300, 241],
+  leatherBelt: [941, 647, 309, 73],
+  ratchetStrap: [0, 996, 314, 71],
+  chain: [316, 1007, 309, 77],
+  steelBand: [640, 1004, 305, 106],
+  nylonRope: [945, 995, 307, 87],
+};
+
+function fixingThumbnailImageStyle(materialId: FixingMaterialId): CSSProperties {
+  const [x, y, width, height] = FIXING_THUMBNAIL_BOUNDS[materialId];
+  // Scale against the longest side, then position the full source atlas behind
+  // a square clipping window. The supplied art stays undistorted and only the
+  // sidebar thumbnail changes; in-world nine-slice materials keep their assets.
+  const sourcePixelToContainerPercent = 86 / Math.max(width, height);
   return {
-    backgroundImage: "url(/assets/fixed-material-atlas-v1.png)",
-    backgroundPosition: `${x}% ${y}%`,
-    backgroundRepeat: "no-repeat",
-    backgroundSize: "400% 300%",
-    filter: "saturate(.62) brightness(.82) contrast(1.1) sepia(.08)",
+    width: `${FIXING_THUMBNAIL_SOURCE_SIZE * sourcePixelToContainerPercent}%`,
+    height: "auto",
+    left: `${50 - (x + width / 2) * sourcePixelToContainerPercent}%`,
+    top: `${50 - (y + height / 2) * sourcePixelToContainerPercent}%`,
   };
 }
 
@@ -3940,8 +3944,9 @@ type ConfirmationAction = "reset" | "exit" | null;
 type EndingPhase = "video" | "hold" | "fading" | "black" | "epilogue";
 
 const ENDING_LAST_FRAME_HOLD_MS = 500;
-const ENDING_FADE_TO_BLACK_MS = 850;
+const ENDING_FADE_TO_BLACK_MS = 1600;
 const ENDING_BLACK_HOLD_MS = 2000;
+const EPILOGUE_FADE_IN_MS = 2400;
 
 function GameStage({ level, onExit, audio }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -4044,7 +4049,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
     epilogueMusicFadeRef.current?.();
     void Promise.all([video.play(), soundtrack.play()])
       .then(() => {
-        epilogueMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.68, 1400);
+        epilogueMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.68, EPILOGUE_FADE_IN_MS);
       })
       .catch(() => setEndingNeedsGesture(true));
     return () => {
@@ -4095,7 +4100,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
           <canvas
             ref={canvasRef}
             className="game-canvas"
-            aria-label="搭建物料与固定物料物理建造区"
+            aria-label="搭建物料与辅助固定材料物理建造区"
             onPointerDown={(event) => {
               event.preventDefault();
               event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -4122,7 +4127,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               <span aria-hidden="true">⌁</span><b>结构正在坍落</b><small>残骸停稳后显示结果</small>
             </div>
           )}
-          <aside className="inventory-panel" aria-label="搭建与固定物料工具栏">
+          <aside className="inventory-panel" aria-label="搭建物料与辅助固定材料工具栏">
             <section className="inventory-section building-material-section" aria-labelledby="building-material-title">
               <header className="inventory-section-head">
                 <strong id="building-material-title">搭建物料</strong>
@@ -4164,10 +4169,10 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
             </section>
             <section className="inventory-section fixing-material-section" aria-labelledby="fixing-material-title">
               <header className="inventory-section-head">
-                <strong id="fixing-material-title">固定物料</strong>
+                <strong id="fixing-material-title">辅助固定材料</strong>
                 <span>{availableFixings}</span>
               </header>
-              <div className="inventory-section-list inventory-list" aria-label="固定物料列表">
+              <div className="inventory-section-list inventory-list" aria-label="辅助固定材料列表">
                 {fixingItems.map((id) => {
                   const material = FIXING_MATERIALS[id];
                   const count = snapshot.fixingInventory[id];
@@ -4193,7 +4198,14 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                         );
                       }}
                     >
-                      <span className="material-icon fixing" style={fixingThumbnailStyle(id)} aria-hidden="true" />
+                      <span className="material-icon fixing fixing-thumbnail" aria-hidden="true">
+                        <img
+                          src="/assets/fixed-material-thumbnail-atlas-v2.png"
+                          alt=""
+                          draggable={false}
+                          style={fixingThumbnailImageStyle(id)}
+                        />
+                      </span>
                       <span className="material-copy"><b>{material.name}</b><small>{material.mode === "tie" ? "柔性拉结" : "刚性支撑"}</small></span>
                       <span className="material-count">×{count}</span>
                     </button>
@@ -4569,7 +4581,7 @@ export function DawnTowerGame() {
                     <li>从右侧“搭建物料”拖出垃圾，放入场景中的有效搭建区域。</li>
                     <li>第一件物品可以直接落在地面；从第二件开始，必须堆放在上一件物品之上。</li>
                     <li>松手后物品会受到重力、碰撞和重心影响；已经放置的物品仍可拖动调整。</li>
-                    <li>从下方“固定物料”区域直接拖出材料，放到两个物件的接缝或物件与地面之间；松手后系统会自动选择合理的两处受力点。</li>
+                    <li>从“辅助固定材料”区域拖出材料，在物件或地面上松手锁定第一点；再拖到另一处松手完成连接。</li>
                     <li>木板、铁板和钢筋可以拉压支撑；麻绳、钢丝、胶布、皮带等只在绷紧后承受拉力。材料均有自身重量与强度，超限会弯折或断裂。</li>
                     <li>每种废料具有接近现实的相对重量、摩擦稳定性与承重差异；承重强度统一按现实参考值强化至约 3 倍。</li>
                     <li>持续超出承重上限时，物件会先弯折、压瘪或开裂，随后摩擦与稳定性下降，并可能引发整体垮塌。</li>
