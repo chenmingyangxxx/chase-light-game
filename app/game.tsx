@@ -187,8 +187,9 @@ interface ClientBounds {
 interface FixingDraft {
   materialId: FixingMaterialId;
   current: Matter.Vector;
-  phase: "placing-first" | "waiting-second" | "placing-second";
+  phase: "waiting-first" | "placing-first" | "waiting-second" | "placing-second";
   originBounds: ClientBounds;
+  hasLeftOrigin: boolean;
   pointerId?: number;
   anchorA?: FixAnchor;
   anchorB?: FixAnchor;
@@ -456,16 +457,85 @@ const LEVELS: LevelConfig[] = [
   },
 ];
 
-function inventoryFor(level: LevelConfig): Record<ItemId, number> {
+const BUILD_MATERIAL_QUANTITIES: Readonly<Record<ItemId, number>> = {
+  pallet: 6,
+  slab: 5,
+  container: 6,
+  car: 4,
+  cabinet: 6,
+  sofa: 5,
+  beam: 5,
+  ladder: 5,
+  pipes: 5,
+  crate: 7,
+  fridge: 6,
+  washer: 6,
+  computer: 7,
+  scaffold: 6,
+  barrel: 5,
+  tire: 5,
+  bicycle: 4,
+  chair: 5,
+};
+
+function shuffled<T>(values: readonly T[]) {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
+}
+
+function inventoryFor(_level: LevelConfig): Record<ItemId, number> {
   const inventory = Object.fromEntries(Object.keys(ITEMS).map((id) => [id, 0])) as Record<ItemId, number>;
-  level.inventory.forEach((itemId) => { inventory[itemId] += 1; });
+  const chosen = new Set<ItemId>();
+  const addRandom = (pool: readonly ItemId[], count: number) => {
+    shuffled(pool.filter((id) => !chosen.has(id))).slice(0, count).forEach((id) => chosen.add(id));
+  };
+
+  // Each round keeps a dependable structural mix while the actual eight
+  // categories change: two broad bases, three height-builders, one bridge,
+  // one regular block and one wildcard. Quantities leave room for recovery
+  // without turning the 99 m objective into an inventory puzzle.
+  addRandom(["container", "slab", "car"], 1);
+  addRandom(["pallet", "container", "slab", "car", "sofa"], 1);
+  addRandom(["scaffold", "ladder", "cabinet", "fridge"], 3);
+  addRandom(["beam", "pipes"], 1);
+  addRandom(["crate", "washer", "computer"], 1);
+  const wildcardPool: ItemId[] = Math.random() < 0.28
+    ? ["barrel", "tire", "bicycle", "chair"]
+    : (Object.keys(ITEMS) as ItemId[]).filter((id) => ITEMS[id].role !== "risky");
+  addRandom(wildcardPool, 1);
+  if (chosen.size < 8) addRandom(Object.keys(ITEMS) as ItemId[], 8 - chosen.size);
+  chosen.forEach((itemId) => { inventory[itemId] = BUILD_MATERIAL_QUANTITIES[itemId]; });
   return inventory;
 }
 
-function hintsFor(level: LevelConfig): HintSpec[] {
+function fixingInventoryForRound(): Record<FixingMaterialId, number> {
+  const brace = shuffled<FixingMaterialId>(["woodPlank", "ironPlate", "rebar"])[0];
+  const strongTie = shuffled<FixingMaterialId>(["steelWire", "ratchetStrap", "chain", "steelBand"])[0];
+  const flexibleTie = shuffled<FixingMaterialId>(["hempRope", "ductTape", "leatherBelt", "nylonRope"])[0];
+  const inventory = fixingInventoryFor([brace, strongTie, flexibleTie]);
+  inventory[brace] = Math.max(4, FIXING_MATERIALS[brace].quantity);
+  inventory[strongTie] = Math.max(5, FIXING_MATERIALS[strongTie].quantity);
+  inventory[flexibleTie] = Math.max(6, FIXING_MATERIALS[flexibleTie].quantity);
+  return inventory;
+}
+
+function hintsFor(level: LevelConfig, inventory: Record<ItemId, number>): HintSpec[] {
   const secondHeight = Math.max(5, Math.min(level.target * 0.45, 24));
   const finalHeight = Math.max(7, level.target - 4);
-  const [first, second, third] = level.hintItems;
+  const available = (Object.keys(ITEMS) as ItemId[]).filter((id) => inventory[id] > 0);
+  const best = (role: ItemRole, score: (item: ItemDefinition) => number) => available
+    .filter((id) => ITEMS[id].role === role)
+    .sort((a, b) => score(ITEMS[b]) - score(ITEMS[a]))[0];
+  const first = best("foundation", (item) => item.width) ?? available[0] ?? level.hintItems[0];
+  const second = best("tall", (item) => item.height) ?? available[1] ?? first;
+  const third = best("bridge", (item) => item.width)
+    ?? best("block", (item) => item.width)
+    ?? available[2]
+    ?? second;
   return [
     { itemId: first, xMeters: 0, yMeters: 1.8, rotation: 0, text: `先选择「${ITEMS[first].name}」，横放在绿色落点上，铺出宽底座。` },
     { itemId: second, xMeters: 0, yMeters: secondHeight, rotation: 0, text: `接着用「${ITEMS[second].name}」补高，重心尽量对准中线。` },
@@ -480,7 +550,7 @@ function initialSnapshot(level: LevelConfig): GameSnapshot {
     stableHeight: 0,
     hintsLeft: 3,
     inventory: inventoryFor(level),
-    fixingInventory: fixingInventoryFor(),
+    fixingInventory: fixingInventoryForRound(),
     heldItem: null,
     heldFixing: null,
     fixingAnchorCount: 0,
@@ -871,7 +941,7 @@ class TowerPhysicsGame {
     this.onClear = onClear;
     this.audio = audio;
     this.inventory = inventoryFor(level);
-    this.fixingInventory = fixingInventoryFor();
+    this.fixingInventory = fixingInventoryForRound();
     this.engine = this.createEngine();
     this.artwork = {
       // These two complete-width paintings are the canonical gameplay pair.
@@ -957,6 +1027,7 @@ class TowerPhysicsGame {
       current: point,
       phase: "placing-first",
       originBounds,
+      hasLeftOrigin: false,
       pointerId,
     };
     this.audio.pickup(ITEMS.pallet);
@@ -967,6 +1038,22 @@ class TowerPhysicsGame {
   beginCanvasInteraction(clientX: number, clientY: number, pointerId: number) {
     if (this.status !== "building") return;
     const point = this.clientToWorld(clientX, clientY);
+    if (this.fixingDraft?.phase === "waiting-first") {
+      this.fixingDraft.phase = "placing-first";
+      this.fixingDraft.pointerId = pointerId;
+      this.fixingDraft.current = point;
+      this.fixingDraft.candidate = undefined;
+      this.fixingDraft.cancelPending = false;
+      this.updateFixingDraft(
+        point,
+        this.isClientInsideDropZone(clientX, clientY),
+        clientX,
+        clientY,
+      );
+      this.message = "第一个锚点选择中：可在搭建物料或地面的任意位置松手吸附。";
+      this.emit(true);
+      return;
+    }
     if (this.fixingDraft?.phase === "waiting-second") {
       this.fixingDraft.phase = "placing-second";
       this.fixingDraft.pointerId = pointerId;
@@ -1067,7 +1154,7 @@ class TowerPhysicsGame {
 
   useHint() {
     if (this.status !== "building" || this.hintsLeft <= 0) return;
-    const hints = hintsFor(this.level);
+    const hints = hintsFor(this.level, this.inventory);
     this.activeHint = hints[this.hintIndex];
     this.audio.hint();
     this.message = this.activeHint.text;
@@ -1080,7 +1167,7 @@ class TowerPhysicsGame {
     this.status = "building";
     this.dynamicBodies = [];
     this.fixingLinks = [];
-    this.fixingInventory = fixingInventoryFor();
+    this.fixingInventory = fixingInventoryForRound();
     this.fixingDraft = null;
     this.nextFixingId = 1;
     this.groundContacts.clear();
@@ -1265,6 +1352,12 @@ class TowerPhysicsGame {
         this.fixingDraft.cancelPending = false;
         this.fixingDraft.current = this.anchorWorld(this.fixingDraft.anchorA);
         this.message = "第二个锚点拖拽已中断，第一个锚点仍保留；可重新拖拽第二个位置。";
+      } else if (this.fixingDraft.phase === "placing-first") {
+        this.fixingDraft.phase = "waiting-first";
+        this.fixingDraft.pointerId = undefined;
+        this.fixingDraft.candidate = undefined;
+        this.fixingDraft.cancelPending = false;
+        this.message = "第一个锚点选择被中断，固定物料仍保持选中；可重新点击搭建物料或地面。";
       } else {
         this.fixingDraft = null;
         this.message = "固定材料拖拽已取消，数量不会消耗。";
@@ -1319,6 +1412,16 @@ class TowerPhysicsGame {
     const materialId = draft.materialId;
 
     if (returnedToOrigin) {
+      if (draft.phase === "placing-first" && !draft.hasLeftOrigin) {
+        draft.phase = "waiting-first";
+        draft.pointerId = undefined;
+        draft.anchorA = undefined;
+        draft.candidate = undefined;
+        draft.cancelPending = false;
+        this.message = `已选择「${FIXING_MATERIALS[materialId].name}」。现在点击或拖拽到搭建物料/地面，松手设置第一个锚点。`;
+        this.emit(true);
+        return;
+      }
       this.fixingDraft = null;
       this.message = `「${FIXING_MATERIALS[materialId].name}」已放回原物料栏，本次固定取消且不消耗数量。`;
       this.emit(true);
@@ -1328,10 +1431,14 @@ class TowerPhysicsGame {
     if (draft.phase === "placing-first") {
       const first = inDropZone ? this.findNearestFixAnchor(point) : null;
       if (!first) {
-        this.fixingDraft = null;
+        draft.phase = "waiting-first";
+        draft.pointerId = undefined;
+        draft.anchorA = undefined;
+        draft.candidate = undefined;
+        draft.cancelPending = false;
         this.message = inDropZone
-          ? `没有找到可固定的受力面。「${FIXING_MATERIALS[materialId].name}」未被消耗。`
-          : "固定材料没有进入有效建造区，数量不会消耗。";
+          ? `这里没有可固定的受力面。「${FIXING_MATERIALS[materialId].name}」仍保持选中，请点击搭建物料或地面。`
+          : "没有进入有效建造区；固定物料仍保持选中，请重新选择第一个锚点。";
         this.emit(true);
         return;
       }
@@ -1363,7 +1470,7 @@ class TowerPhysicsGame {
       draft.cancelPending = false;
       draft.current = this.anchorWorld(draft.anchorA);
       this.message = inDropZone
-        ? `第二个位置没有可用锚点，或超出「${FIXING_MATERIALS[materialId].name}」长度；第一个锚点已保留，请重新拖拽。`
+        ? "第二个位置没有可用锚点，或与第一个锚点位于同一物件；第一个锚点已保留，请重新拖拽。"
         : "第二个锚点未进入有效建造区；第一个锚点已保留，请重新拖拽。";
       this.emit(true);
       return;
@@ -1385,7 +1492,9 @@ class TowerPhysicsGame {
     draft.current = point;
     draft.anchorB = undefined;
     draft.candidate = undefined;
-    draft.cancelPending = this.isClientInsideBounds(clientX, clientY, draft.originBounds);
+    const insideOrigin = this.isClientInsideBounds(clientX, clientY, draft.originBounds);
+    if (!insideOrigin) draft.hasLeftOrigin = true;
+    draft.cancelPending = insideOrigin && draft.hasLeftOrigin;
 
     if (inDropZone && !draft.cancelPending) {
       if (draft.phase === "placing-first") {
@@ -1402,7 +1511,7 @@ class TowerPhysicsGame {
     if (previousCandidate === nextCandidate && previousCancel === Boolean(draft.cancelPending)) return;
     this.message = draft.cancelPending
       ? "松手将放回原物料栏并取消本次固定。"
-      : draft.phase === "placing-first"
+        : draft.phase === "placing-first"
         ? draft.candidate
           ? "已找到第一个受力面，松手锁定锚点。"
           : "移动到搭建物或地面，松手锁定第一个锚点。"
@@ -1424,25 +1533,43 @@ class TowerPhysicsGame {
   }
 
   private findNearestFixAnchor(point: Matter.Vector, excludedBodyId?: number): FixAnchor | null {
-    const snapRadius = 38;
+    const snapRadius = 72;
+    const groundSnapRadius = 76;
+    const dropBounds = this.dropZoneWorldBounds();
+    const canUseGround = this.baseBody
+      && this.baseBody.id !== excludedBodyId
+      && point.x >= dropBounds.left
+      && point.x <= dropBounds.right
+      && point.y >= BASE_Y - groundSnapRadius;
+
+    // A deliberate press on the visible road always means ground, even when
+    // a large tilted body's AABB overlaps that screen area.
+    if (canUseGround && this.baseBody && point.y >= BASE_Y - 24) {
+      return this.makeFixAnchor(this.baseBody, {
+        x: clamp(point.x, dropBounds.left + 6, dropBounds.right - 6),
+        y: BASE_Y,
+      }, true);
+    }
+
     const candidates = [...this.dynamicBodies]
       .reverse()
       .filter((body) => !this.isFallen(body) && body.id !== excludedBodyId)
       .map((body) => ({
         anchor: this.anchorPointOnBody(body, point),
-        distance: this.distanceToBodyBounds(point, body),
+        distance: Matter.Vertices.contains(body.vertices, point)
+          ? -1
+          : this.distanceToBodyBounds(point, body),
       }))
       .filter((candidate) => candidate.distance <= snapRadius);
 
-    if (this.baseBody && this.baseBody.id !== excludedBodyId && Math.abs(point.y - BASE_Y) <= snapRadius) {
-      const dropBounds = this.dropZoneWorldBounds();
+    if (canUseGround && this.baseBody) {
       const groundPoint = {
         x: clamp(point.x, dropBounds.left + 6, dropBounds.right - 6),
         y: BASE_Y,
       };
       candidates.push({
         anchor: this.makeFixAnchor(this.baseBody, groundPoint, true),
-        distance: Math.abs(point.y - BASE_Y),
+        distance: Math.max(0, BASE_Y - point.y),
       });
     }
 
@@ -1461,7 +1588,9 @@ class TowerPhysicsGame {
     if (item?.shape === "circle") {
       const radius = Math.min(halfWidth, halfHeight);
       const magnitude = Math.hypot(rawLocal.x, rawLocal.y);
-      local = magnitude > 0.001
+      local = magnitude <= radius
+        ? rawLocal
+        : magnitude > 0.001
         ? { x: rawLocal.x / magnitude * radius, y: rawLocal.y / magnitude * radius }
         : { x: 0, y: -radius };
     } else {
@@ -1469,30 +1598,20 @@ class TowerPhysicsGame {
         x: clamp(rawLocal.x, -halfWidth, halfWidth),
         y: clamp(rawLocal.y, -halfHeight, halfHeight),
       };
-      const inside = Math.abs(rawLocal.x) <= halfWidth && Math.abs(rawLocal.y) <= halfHeight;
-      if (inside) {
-        const distances = [
-          { axis: "x" as const, value: -halfWidth, distance: rawLocal.x + halfWidth },
-          { axis: "x" as const, value: halfWidth, distance: halfWidth - rawLocal.x },
-          { axis: "y" as const, value: -halfHeight, distance: rawLocal.y + halfHeight },
-          { axis: "y" as const, value: halfHeight, distance: halfHeight - rawLocal.y },
-        ].sort((a, b) => a.distance - b.distance);
-        const nearest = distances[0];
-        local = nearest.axis === "x" ? { x: nearest.value, y: local.y } : { x: local.x, y: nearest.value };
-      }
     }
 
     const world = Vector.add(body.position, Vector.rotate(local, body.angle));
     return this.makeFixAnchor(body, world, false);
   }
 
-  private fixingAnchorsWithinRange(materialId: FixingMaterialId, anchorA: FixAnchor, anchorB: FixAnchor) {
-    const definition = FIXING_MATERIALS[materialId];
+  private fixingAnchorsWithinRange(_materialId: FixingMaterialId, anchorA: FixAnchor, anchorB: FixAnchor) {
     const worldA = this.anchorWorld(anchorA);
     const worldB = this.anchorWorld(anchorB);
     const distance = Math.hypot(worldB.x - worldA.x, worldB.y - worldA.y);
-    return distance >= Math.max(10, definition.minLength * PIXELS_PER_METER)
-      && distance <= definition.maxLength * PIXELS_PER_METER;
+    // The tower is 99 m tall while real discarded straps are authored at a
+    // smaller visual scale. Any two distinct useful points are connectable;
+    // material strength, stretch and breakage still decide whether it holds.
+    return anchorA.body.id !== anchorB.body.id && distance >= 4;
   }
 
   private makeFixAnchor(body: Matter.Body, world: Matter.Vector, ground: boolean): FixAnchor {
@@ -1512,12 +1631,8 @@ class TowerPhysicsGame {
     const worldA = this.anchorWorld(anchorA);
     const worldB = this.anchorWorld(anchorB);
     const distance = Math.hypot(worldB.x - worldA.x, worldB.y - worldA.y);
-    const minimum = Math.max(10, definition.minLength * PIXELS_PER_METER);
-    const maximum = definition.maxLength * PIXELS_PER_METER;
-    if (distance < minimum || distance > maximum) {
-      this.message = distance > maximum
-        ? `自动连接距离超过「${definition.name}」的可用长度 ${definition.maxLength.toFixed(1)} 米，请放到更近的接缝处。`
-        : `两处受力面距离太近，无法安装「${definition.name}」。`;
+    if (distance < 4 || anchorA.body.id === anchorB.body.id) {
+      this.message = `两个锚点需要位于不同的搭建物料或地面上，请重新选择。`;
       this.emit(true);
       return;
     }
@@ -3970,7 +4085,8 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const isInteractive = snapshot.status === "building";
   const availablePieces = Object.values(snapshot.inventory).reduce((total, count) => total + count, 0);
   const availableFixings = Object.values(snapshot.fixingInventory).reduce((total, count) => total + count, 0);
-  const inventoryItems = (Object.keys(ITEMS) as ItemId[]).filter((itemId) => level.inventory.includes(itemId));
+  const inventoryItems = (Object.keys(ITEMS) as ItemId[]).filter((itemId) => snapshot.inventory[itemId] > 0);
+  const fixingItems = FIXING_MATERIAL_ORDER.filter((id) => snapshot.fixingInventory[id] > 0);
 
   return (
     <section className="game-layout" aria-label={`第 ${level.id} 关：${level.title}`}>
@@ -4006,7 +4122,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               <span aria-hidden="true">⌁</span><b>结构正在坍落</b><small>残骸停稳后显示结果</small>
             </div>
           )}
-          <aside className="inventory-panel panel" aria-label="搭建与固定物料工具栏">
+          <aside className="inventory-panel" aria-label="搭建与固定物料工具栏">
             <section className="inventory-section building-material-section" aria-labelledby="building-material-title">
               <header className="inventory-section-head">
                 <strong id="building-material-title">搭建物料</strong>
@@ -4052,7 +4168,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 <span>{availableFixings}</span>
               </header>
               <div className="inventory-section-list inventory-list" aria-label="固定物料列表">
-                {FIXING_MATERIAL_ORDER.map((id) => {
+                {fixingItems.map((id) => {
                   const material = FIXING_MATERIALS[id];
                   const count = snapshot.fixingInventory[id];
                   const dragging = snapshot.heldFixing === id;
@@ -4062,7 +4178,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                       type="button"
                       key={id}
                       disabled={!isInteractive || count === 0}
-                      aria-label={`拖拽${material.name}依次锁定两个锚点，剩余 ${count} 件`}
+                      aria-label={`选择或拖拽${material.name}，依次在场景中锁定两个锚点，剩余 ${count} 件`}
                       aria-pressed={dragging}
                       onPointerDown={(event) => {
                         event.preventDefault();

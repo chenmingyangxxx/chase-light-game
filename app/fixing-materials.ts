@@ -278,10 +278,13 @@ export const FIXING_MATERIAL_ORDER = [
   "nylonRope",
 ] as const satisfies readonly FixingMaterialId[];
 
-export function fixingInventoryFor(): Record<FixingMaterialId, number> {
+export function fixingInventoryFor(
+  selectedIds: readonly FixingMaterialId[] = FIXING_MATERIAL_ORDER,
+): Record<FixingMaterialId, number> {
+  const selected = new Set(selectedIds);
   return FIXING_MATERIAL_ORDER.reduce<Record<FixingMaterialId, number>>(
     (inventory, id) => {
-      inventory[id] = FIXING_MATERIALS[id].quantity;
+      inventory[id] = selected.has(id) ? FIXING_MATERIALS[id].quantity : 0;
       return inventory;
     },
     {} as Record<FixingMaterialId, number>,
