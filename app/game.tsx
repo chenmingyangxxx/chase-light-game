@@ -72,6 +72,7 @@ const BACKDROP_BOTTOM = BASE_Y + 149;
 // needs. Lift only the painted backdrop by an exact CSS-pixel amount; the
 // Matter floor, drop zone and foreground debris keep their established anchors.
 const BACKDROP_LIFT_CSS_PX = 100;
+const MOBILE_BACKDROP_LIFT_CSS_PX = BACKDROP_LIFT_CSS_PX - 60;
 // Keep the physical floor close to the lower edge of the build viewport. The
 // former 84 px world-space margin made placed props appear to hover above the
 // foreground road in wide layouts.
@@ -2640,7 +2641,10 @@ class TowerPhysicsGame {
     const scale = rect.height / WORLD_HEIGHT;
     this.viewportWorldWidth = rect.width / Math.max(scale, 0.001);
     this.viewportWorldLeft = BASE_X - this.viewportWorldWidth / 2;
-    this.backdropLiftWorld = BACKDROP_LIFT_CSS_PX / Math.max(scale, 0.001);
+    const backdropLiftCssPx = rect.width <= 600
+      ? MOBILE_BACKDROP_LIFT_CSS_PX
+      : BACKDROP_LIFT_CSS_PX;
+    this.backdropLiftWorld = backdropLiftCssPx / Math.max(scale, 0.001);
     this.context.setTransform(1, 0, 0, 1, 0, 0);
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.context.setTransform(dpr * scale, 0, 0, dpr * scale, -this.viewportWorldLeft * dpr * scale, 0);

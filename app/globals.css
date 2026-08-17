@@ -1489,7 +1489,7 @@ body {
   flex: 1 1 auto;
   flex-direction: column;
   gap: 5px;
-  padding-top: 5px;
+  padding: 5px 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1553,7 +1553,7 @@ body {
 
 @media (max-width: 600px) {
   .minimal-game .inventory-panel {
-    grid-template-rows: minmax(0, 1.04fr) minmax(0, .82fr);
+    grid-template-rows: minmax(0, 3fr) minmax(0, 1fr);
     gap: 7px;
   }
   .minimal-game .inventory-section { padding: 0; }
@@ -1586,7 +1586,7 @@ body {
    rail is roughly one third narrower than the former 36vw layout, while cards
    keep a minimum touch height and permit two readable title lines. */
 @media (max-width: 600px) and (orientation: portrait) {
-  .minimal-game { --game-rail-width: clamp(94px, 24vw, 104px); }
+  .minimal-game { --game-rail-width: clamp(86px, 22vw, 96px); }
   .minimal-game .inventory-panel {
     right: 4px;
     bottom: 89px;
@@ -1609,7 +1609,8 @@ body {
   }
   .minimal-game .inventory-section-list.inventory-list {
     gap: 3px;
-    padding-top: 4px;
+    padding: 4px 0;
+    scroll-padding-bottom: 4px;
   }
   .minimal-game .material-card {
     grid-template-columns: 31px minmax(0, 1fr);
@@ -1650,9 +1651,9 @@ body {
   }
 }
 
-@media (max-height: 720px) {
+@media (max-width: 600px) and (max-height: 720px) {
   .minimal-game .inventory-panel {
-    grid-template-rows: minmax(0, 1.04fr) minmax(0, .82fr);
+    grid-template-rows: minmax(0, 4fr) minmax(0, 1fr);
   }
 }
 

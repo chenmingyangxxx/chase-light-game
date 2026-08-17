@@ -1,0 +1,9 @@
+name = "chase-light-game"
+compatibility_date = "2026-08-17"
+pages_build_output_dir = "./cloudflare-pages-dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "chase-light-admin"
+database_id = "036cbff9-647c-4933-ac29-604632d8e976"
+migrations_dir = "migrations"

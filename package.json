@@ -1,6 +1,9 @@
 {
   "name": "ashes-to-aurora-game",
   "version": "0.1.0",
+  "description": "追.光——离线物理堆叠冒险游戏",
+  "author": "Chase Light Game Team",
+  "main": "desktop/main.cjs",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -8,7 +11,12 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
+    "build:cloudflare": "vite build --config vite.cloudflare-pages.config.ts",
+    "preview:cloudflare": "wrangler pages dev cloudflare-pages-dist --d1 DB=chase-light-admin --compatibility-date=2026-08-17",
+    "deploy:cloudflare": "pnpm build:cloudflare && wrangler pages deploy cloudflare-pages-dist --project-name chase-light-game",
     "start": "vinext start",
+    "desktop:renderer": "vite build --config desktop/vite.config.mjs",
+    "desktop:pack": "pnpm desktop:renderer && electron-builder --config desktop/electron-builder.yml --win --dir",
     "test": "vinext build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
@@ -32,6 +40,8 @@
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
     "drizzle-kit": "0.31.10",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
     "eslint": "9.39.4",
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react": "7.37.5",

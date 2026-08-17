@@ -36,6 +36,7 @@ yarn-error.log*
 
 /dist/
 /pages-dist/
+/cloudflare-pages-dist/
 /.wrangler/
 /outputs/
 /work/
