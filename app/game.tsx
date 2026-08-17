@@ -1,7 +1,13 @@
 "use client";
 
 import Matter from "matter-js";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   FIXING_MATERIALS,
   FIXING_MATERIAL_ORDER,
@@ -58,6 +64,13 @@ const PHYSICS_MASS_PER_KG = 0.045;
 // ten percent of that mass is applied to the tower simulation.
 const FIXING_WEIGHT_RATIO = 0.1;
 const STRENGTH_MULTIPLIER = 3;
+// A newly installed link must settle onto its anchors before it is allowed to
+// accumulate fatigue. Ground braces in particular used to fall during the
+// near-zero-stiffness frame and then appear to detach or disappear.
+const FIXING_INSTALL_RAMP_MS = 720;
+const FIXING_INSTALL_GRACE_MS = 1100;
+const GROUND_FIXING_INSTALL_RAMP_MS = 1000;
+const GROUND_FIXING_INSTALL_GRACE_MS = 2200;
 // Keep the robot's authored real-world profile, but soften the effective
 // moving payload by 50% so the climb remains readable without making every
 // otherwise sound tower fail under a single gait cycle.
@@ -241,6 +254,18 @@ interface ClientBounds {
   right: number;
   top: number;
   bottom: number;
+}
+
+type MaterialDragKind = "build" | "fixing";
+
+interface PendingMaterialTouch {
+  pointerId: number;
+  kind: MaterialDragKind;
+  materialId: ItemId | FixingMaterialId;
+  startX: number;
+  startY: number;
+  originBounds: ClientBounds;
+  target: HTMLButtonElement;
 }
 
 interface FixingDraft {
@@ -555,21 +580,55 @@ function inventoryFor(_level: LevelConfig): Record<ItemId, number> {
     shuffled(pool.filter((id) => !chosen.has(id))).slice(0, count).forEach((id) => chosen.add(id));
   };
 
-  // Each round keeps a dependable structural mix while the actual eight
-  // categories change: two broad bases, three height-builders, one bridge,
-  // one regular block and one wildcard. Quantities leave room for recovery
-  // without turning the 99 m objective into an inventory puzzle.
-  addRandom(["container", "slab", "car"], 1);
+  // Randomness changes the solution, not whether a solution exists. Every
+  // round contains two reliable foundations, three height-builders, a bridge
+  // and a compact transition block; the final slot is drawn only from the
+  // non-risky pool. This removes rare unwinnable all-light/all-round layouts.
+  addRandom(["container", "slab"], 1);
   addRandom(["pallet", "container", "slab", "car", "sofa"], 1);
   addRandom(["scaffold", "ladder", "cabinet", "fridge"], 3);
   addRandom(["beam", "pipes"], 1);
   addRandom(["crate", "washer", "computer"], 1);
-  const wildcardPool: ItemId[] = Math.random() < 0.28
-    ? ["barrel", "tire", "bicycle", "chair"]
-    : (Object.keys(ITEMS) as ItemId[]).filter((id) => ITEMS[id].role !== "risky");
-  addRandom(wildcardPool, 1);
-  if (chosen.size < 8) addRandom(Object.keys(ITEMS) as ItemId[], 8 - chosen.size);
-  chosen.forEach((itemId) => { inventory[itemId] = BUILD_MATERIAL_QUANTITIES[itemId]; });
+  addRandom((Object.keys(ITEMS) as ItemId[]).filter((id) => ITEMS[id].role !== "risky"), 1);
+  if (chosen.size < 8) {
+    addRandom((Object.keys(ITEMS) as ItemId[]).filter((id) => ITEMS[id].role !== "risky"), 8 - chosen.size);
+  }
+
+  const roleMinimum: Record<ItemRole, number> = {
+    foundation: 6,
+    tall: 7,
+    bridge: 6,
+    block: 7,
+    risky: 5,
+  };
+  chosen.forEach((itemId) => {
+    inventory[itemId] = Math.max(BUILD_MATERIAL_QUANTITIES[itemId], roleMinimum[ITEMS[itemId].role]);
+  });
+
+  // A conservative usable-height budget accounts for overlap, imperfect
+  // placement and recovery pieces. Add reserves to the tallest selected item
+  // until the round has roughly 1.7x the nominal 99 m requirement.
+  const usableRatio: Record<ItemRole, number> = {
+    foundation: 0.42,
+    tall: 0.68,
+    bridge: 0.32,
+    block: 0.56,
+    risky: 0.24,
+  };
+  const heightBudget = () => [...chosen].reduce(
+    (total, itemId) => total + inventory[itemId] * ITEMS[itemId].height * usableRatio[ITEMS[itemId].role],
+    0,
+  );
+  const reserveOrder = [...chosen]
+    .filter((itemId) => ITEMS[itemId].role === "tall" || ITEMS[itemId].role === "block")
+    .sort((a, b) => ITEMS[b].height - ITEMS[a].height);
+  const requiredBudget = GOAL_REACH_HEIGHT * PIXELS_PER_METER * 1.72;
+  let reserveIndex = 0;
+  while (heightBudget() < requiredBudget && reserveOrder.length > 0 && reserveIndex < 24) {
+    const itemId = reserveOrder[reserveIndex % reserveOrder.length];
+    inventory[itemId] += 1;
+    reserveIndex += 1;
+  }
   return inventory;
 }
 
@@ -578,9 +637,9 @@ function fixingInventoryForRound(): Record<FixingMaterialId, number> {
   const strongTie = shuffled<FixingMaterialId>(["steelWire", "ratchetStrap", "chain", "steelBand"])[0];
   const flexibleTie = shuffled<FixingMaterialId>(["hempRope", "ductTape", "leatherBelt", "nylonRope"])[0];
   const inventory = fixingInventoryFor([brace, strongTie, flexibleTie]);
-  inventory[brace] = Math.max(4, FIXING_MATERIALS[brace].quantity);
-  inventory[strongTie] = Math.max(5, FIXING_MATERIALS[strongTie].quantity);
-  inventory[flexibleTie] = Math.max(6, FIXING_MATERIALS[flexibleTie].quantity);
+  inventory[brace] = Math.max(5, FIXING_MATERIALS[brace].quantity);
+  inventory[strongTie] = Math.max(6, FIXING_MATERIALS[strongTie].quantity);
+  inventory[flexibleTie] = Math.max(flexibleTie === "ductTape" ? 9 : 7, FIXING_MATERIALS[flexibleTie].quantity);
   return inventory;
 }
 
@@ -1813,67 +1872,23 @@ class TowerPhysicsGame {
     let braceBody: FixingBody | undefined;
     const restLength = distance;
     if (definition.mode === "brace") {
-      const midpoint = { x: (worldA.x + worldB.x) / 2, y: (worldA.y + worldB.y) / 2 };
-      const angle = Math.atan2(worldB.y - worldA.y, worldB.x - worldA.x);
-      braceBody = Bodies.rectangle(
-        midpoint.x,
-        midpoint.y,
-        distance,
-        Math.max(4, definition.width * PIXELS_PER_METER),
-        {
-          friction: 0.78,
-          frictionStatic: 0.95,
-          restitution: 0.015,
-          frictionAir: 0.008,
-          slop: 0.001,
-          // While installed, the joints transmit load and the brace should not
-          // fight its two connected bodies through overlapping end-collisions.
-          // Once it breaks it becomes solid debris and collides normally.
-          isSensor: true,
-          label: `fixing:${materialId}`,
-        },
-      ) as FixingBody;
-      braceBody.gameFixingId = materialId;
-      Body.setAngle(braceBody, angle);
-      Body.setMass(braceBody, definition.massKg * FIXING_WEIGHT_RATIO * PHYSICS_MASS_PER_KG);
-      // Match the connected pieces' motion before installing the joints. A
-      // stationary brace attached to moving bodies would otherwise create an
-      // artificial impulse on the very first physics step.
-      const velocityA = anchorA.body.isStatic ? { x: 0, y: 0 } : anchorA.body.velocity;
-      const velocityB = anchorB.body.isStatic ? { x: 0, y: 0 } : anchorB.body.velocity;
-      Body.setVelocity(braceBody, {
-        x: (velocityA.x + velocityB.x) / 2,
-        y: (velocityA.y + velocityB.y) / 2,
-      });
-      Body.setAngularVelocity(
-        braceBody,
-        ((anchorA.body.isStatic ? 0 : anchorA.body.angularVelocity)
-          + (anchorB.body.isStatic ? 0 : anchorB.body.angularVelocity)) / 2,
-      );
-      const half = distance / 2;
-      constraints.push(
-        Constraint.create({
-          bodyA: anchorA.body,
-          pointA: anchorA.local,
-          bodyB: braceBody,
-          pointB: { x: -half, y: 0 },
-          length: 0,
-          stiffness: 0.00001,
-          damping: 0,
-          label: `fixing:${materialId}:a`,
-        }),
-        Constraint.create({
-          bodyA: braceBody,
-          pointA: { x: half, y: 0 },
-          bodyB: anchorB.body,
-          pointB: anchorB.local,
-          length: 0,
-          stiffness: 0.00001,
-          damping: 0,
-          label: `fixing:${materialId}:b`,
-        }),
-      );
-      World.add(this.engine.world, [braceBody, ...constraints]);
+      // A rigid fixing is one axial member between the two authored anchors.
+      // The former implementation inserted a third, gravity-driven body and
+      // joined it at both ends. On a static ground anchor that middle body
+      // could drift during the stiffness ramp, then snap back, overload and
+      // appear to detach. A direct distance constraint provides the intended
+      // tension/compression support without an artificial installation body.
+      constraints.push(Constraint.create({
+        bodyA: anchorA.body,
+        pointA: anchorA.local,
+        bodyB: anchorB.body,
+        pointB: anchorB.local,
+        length: restLength,
+        stiffness: 0.055,
+        damping: 0.035,
+        label: `fixing:${materialId}`,
+      }));
+      World.add(this.engine.world, constraints[0]);
     } else {
       // Install flexible fixings at their exact current span. Deliberately
       // shortening a high-stiffness constraint here used to create a large
@@ -1930,8 +1945,14 @@ class TowerPhysicsGame {
       const axialSpeed = Math.abs(relativeX * unitX + relativeY * unitY);
       const shearSpeed = Math.abs(relativeX * -unitY + relativeY * unitX);
       // Ramp a newly installed fixing into service instead of applying full
-      // stiffness and damping in a single physics frame.
-      const installBlend = smoothStep(clamp((this.elapsed - link.installedAt) / 280, 0, 1));
+      // stiffness and damping in a single physics frame. Ground anchors get a
+      // slightly longer settle window because one end cannot share the moving
+      // tower's velocity at the moment of installation.
+      const hasGroundAnchor = link.anchorA.ground || link.anchorB.ground;
+      const installAge = this.elapsed - link.installedAt;
+      const installRampMs = hasGroundAnchor ? GROUND_FIXING_INSTALL_RAMP_MS : FIXING_INSTALL_RAMP_MS;
+      const installGraceMs = hasGroundAnchor ? GROUND_FIXING_INSTALL_GRACE_MS : FIXING_INSTALL_GRACE_MS;
+      const installBlend = smoothStep(clamp(installAge / installRampMs, 0, 1));
 
       const tieTaut = definition.mode === "tie" && length > link.restLength * 1.001;
       if (definition.mode === "tie") {
@@ -1940,8 +1961,10 @@ class TowerPhysicsGame {
         link.constraints[0].damping = taut ? definition.damping * installBlend : 0;
       } else {
         link.constraints.forEach((constraint) => {
-          constraint.stiffness = Math.max(0.00001, definition.stiffness * installBlend);
-          constraint.damping = definition.damping * installBlend;
+          const stiffnessFloor = hasGroundAnchor ? 0.085 : 0.055;
+          const dampingFloor = hasGroundAnchor ? 0.05 : 0.035;
+          constraint.stiffness = stiffnessFloor + (definition.stiffness - stiffnessFloor) * installBlend;
+          constraint.damping = dampingFloor + (definition.damping - dampingFloor) * installBlend;
         });
       }
 
@@ -1972,8 +1995,17 @@ class TowerPhysicsGame {
       const shearRatio = shearN / Math.max(1, definition.shearN * STRENGTH_MULTIPLIER);
       const ratio = Math.max(tensionRatio, compressionRatio, shearRatio);
       link.loadRatio = ratio;
+      // Installation transients are not material fatigue. Without this grace
+      // period, a valid ground link can exceed its limit for one solver frame,
+      // be marked broken and then fade away before the player can see why.
+      if (installAge < installGraceMs) {
+        link.loadRatio = Math.min(ratio, 0.98);
+        link.damage = Math.max(0, link.damage - delta * 0.00012);
+        continue;
+      }
       if (ratio > 1) {
-        link.damage += delta * (0.00042 + (ratio - 1) * 0.00072);
+        const groundDamageScale = hasGroundAnchor ? 0.55 : 1;
+        link.damage += delta * (0.00042 + (ratio - 1) * 0.00072) * groundDamageScale;
         this.audio.strain(ratio);
       } else {
         link.damage = Math.max(0, link.damage - delta * 0.000035);
@@ -1995,10 +2027,10 @@ class TowerPhysicsGame {
     for (const link of this.fixingLinks) {
       if (link.broken) continue;
       const definition = FIXING_MATERIALS[link.materialId];
-      // Brace bodies already receive gravity from Matter using their scaled
-      // mass. Flexible links have no body, so distribute their ten-percent
-      // weight equally across both anchors.
-      if (definition.mode !== "tie") continue;
+      // Constraints have no mass of their own. Apply ten percent of each
+      // material's real weight to its dynamic endpoints, including rigid
+      // braces, so the configured mass is physical without introducing a
+      // third body that can fall away from the ground joint.
       const halfMatterMass = definition.massKg * FIXING_WEIGHT_RATIO * PHYSICS_MASS_PER_KG / 2;
       const force = {
         x: halfMatterMass * this.engine.gravity.x * gravityScale,
@@ -4209,6 +4241,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const epilogueMusicRef = useRef<HTMLAudioElement>(null);
   const endingMusicFadeRef = useRef<(() => void) | null>(null);
   const epilogueMusicFadeRef = useRef<(() => void) | null>(null);
+  const pendingMaterialTouchRef = useRef<PendingMaterialTouch | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
@@ -4241,6 +4274,56 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
       gameRef.current = null;
     };
   }, [audio, level]);
+
+  useEffect(() => {
+    const movePendingMaterial = (event: PointerEvent) => {
+      const pending = pendingMaterialTouchRef.current;
+      if (!pending || pending.pointerId !== event.pointerId) return;
+      const deltaX = event.clientX - pending.startX;
+      const deltaY = event.clientY - pending.startY;
+      if (Math.hypot(deltaX, deltaY) < 9) return;
+
+      // A mostly vertical gesture belongs to the material list. Do not capture
+      // it or call preventDefault, so phones retain native inertial scrolling.
+      if (Math.abs(deltaY) > Math.abs(deltaX) * 1.08) {
+        pendingMaterialTouchRef.current = null;
+        return;
+      }
+
+      event.preventDefault();
+      pending.target.setPointerCapture?.(event.pointerId);
+      if (pending.kind === "build") {
+        gameRef.current?.startHolding(
+          pending.materialId as ItemId,
+          event.clientX,
+          event.clientY,
+          event.pointerId,
+        );
+      } else {
+        gameRef.current?.startHoldingFixing(
+          pending.materialId as FixingMaterialId,
+          event.clientX,
+          event.clientY,
+          event.pointerId,
+          pending.originBounds,
+        );
+      }
+      pendingMaterialTouchRef.current = null;
+    };
+    const clearPendingMaterial = (event: PointerEvent) => {
+      if (pendingMaterialTouchRef.current?.pointerId === event.pointerId) {
+        pendingMaterialTouchRef.current = null;
+      }
+    };
+    window.addEventListener("pointermove", movePendingMaterial, { capture: true, passive: false });
+    window.addEventListener("pointerup", clearPendingMaterial, true);
+    window.addEventListener("pointercancel", clearPendingMaterial, true);
+    return () => {
+      window.removeEventListener("pointermove", movePendingMaterial, true);
+      window.removeEventListener("pointerup", clearPendingMaterial, true);
+      window.removeEventListener("pointercancel", clearPendingMaterial, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (snapshot.status === "failed" && !reportedFailureRef.current) {
@@ -4341,6 +4424,42 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const inventoryItems = (Object.keys(ITEMS) as ItemId[]).filter((itemId) => snapshot.inventory[itemId] > 0);
   const fixingItems = FIXING_MATERIAL_ORDER.filter((id) => snapshot.fixingInventory[id] > 0);
 
+  const beginMaterialPointer = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    kind: MaterialDragKind,
+    materialId: ItemId | FixingMaterialId,
+  ) => {
+    void audio.unlock();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const originBounds = { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+    if (event.pointerType === "touch") {
+      pendingMaterialTouchRef.current = {
+        pointerId: event.pointerId,
+        kind,
+        materialId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originBounds,
+        target: event.currentTarget,
+      };
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    if (kind === "build") {
+      gameRef.current?.startHolding(materialId as ItemId, event.clientX, event.clientY, event.pointerId);
+    } else {
+      gameRef.current?.startHoldingFixing(
+        materialId as FixingMaterialId,
+        event.clientX,
+        event.clientY,
+        event.pointerId,
+        originBounds,
+      );
+    }
+  };
+
   return (
     <section className="game-layout" aria-label={`第 ${level.id} 关：${level.title}`}>
       <div className="stage-stack">
@@ -4389,12 +4508,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                         type="button"
                         key={item.id}
                         disabled={!isInteractive || count === 0}
-                        onPointerDown={(event) => {
-                          event.preventDefault();
-                          void audio.unlock();
-                          event.currentTarget.setPointerCapture?.(event.pointerId);
-                          gameRef.current?.startHolding(item.id, event.clientX, event.clientY, event.pointerId);
-                        }}
+                        onPointerDown={(event) => beginMaterialPointer(event, "build", item.id)}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") return;
                           event.preventDefault();
@@ -4430,19 +4544,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                       disabled={!isInteractive || count === 0}
                       aria-label={`选择或拖拽${material.name}，依次在场景中锁定两个锚点，剩余 ${count} 件`}
                       aria-pressed={dragging}
-                      onPointerDown={(event) => {
-                        event.preventDefault();
-                        void audio.unlock();
-                        event.currentTarget.setPointerCapture?.(event.pointerId);
-                        const rect = event.currentTarget.getBoundingClientRect();
-                        gameRef.current?.startHoldingFixing(
-                          id,
-                          event.clientX,
-                          event.clientY,
-                          event.pointerId,
-                          { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
-                        );
-                      }}
+                      onPointerDown={(event) => beginMaterialPointer(event, "fixing", id)}
                     >
                       <span className="material-icon fixing fixing-thumbnail" aria-hidden="true">
                         <img

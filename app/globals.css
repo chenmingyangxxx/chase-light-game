@@ -216,7 +216,7 @@ button:focus-visible {
 .inventory-head strong { display: block; margin-top: 4px; color: #e2ede1; font-size: 16px; }
 .inventory-head > span { padding: 4px 6px; border-radius: 7px; color: #a5beaa; background: rgba(168, 202, 168, 0.09); font-size: 10px; }
 .inventory-list { display: flex; max-height: 560px; flex-direction: column; gap: 7px; padding-top: 11px; overflow: auto; scrollbar-color: #638b76 transparent; }
-.material-card { display: grid; grid-template-columns: 31px 1fr auto; align-items: center; gap: 8px; width: 100%; min-height: 53px; padding: 7px; border: 1px solid rgba(215, 238, 207, 0.1); border-radius: 11px; color: #dce9d7; background: rgba(255, 255, 255, 0.035); cursor: grab; text-align: left; transition: border-color 150ms ease, background 150ms ease, transform 150ms ease; touch-action: none; }
+.material-card { display: grid; grid-template-columns: 31px 1fr auto; align-items: center; gap: 8px; width: 100%; min-height: 53px; padding: 7px; border: 1px solid rgba(215, 238, 207, 0.1); border-radius: 11px; color: #dce9d7; background: rgba(255, 255, 255, 0.035); cursor: grab; text-align: left; transition: border-color 150ms ease, background 150ms ease, transform 150ms ease; touch-action: pan-y; }
 .material-card:hover:not(:disabled) { transform: translateX(-2px); border-color: rgba(210, 242, 160, 0.5); background: rgba(154, 211, 115, 0.1); }
 .material-card:active:not(:disabled) { cursor: grabbing; }
 .material-card:disabled { cursor: not-allowed; opacity: 0.5; }
@@ -1489,10 +1489,12 @@ body {
   flex: 1 1 auto;
   flex-direction: column;
   gap: 5px;
-  padding: 5px 0;
+  padding: 5px 0 14px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-block: 5px 14px;
+  touch-action: pan-y;
   scrollbar-color: rgba(174, 214, 156, .48) transparent;
   scrollbar-width: thin;
   -webkit-overflow-scrolling: touch;
@@ -1609,8 +1611,8 @@ body {
   }
   .minimal-game .inventory-section-list.inventory-list {
     gap: 3px;
-    padding: 4px 0;
-    scroll-padding-bottom: 4px;
+    padding: 4px 0 12px;
+    scroll-padding-bottom: 12px;
   }
   .minimal-game .material-card {
     grid-template-columns: 31px minmax(0, 1fr);
