@@ -4207,6 +4207,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const [endingPhase, setEndingPhase] = useState<EndingPhase>("video");
   const [, setEndingNeedsGesture] = useState(false);
   const [endingReady, setEndingReady] = useState(false);
+  const [epilogueVisualReady, setEpilogueVisualReady] = useState(false);
   const [endingLeaving, setEndingLeaving] = useState(false);
   const reportedFailureRef = useRef(false);
 
@@ -4220,6 +4221,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
       setEndingPhase("video");
       setEndingNeedsGesture(false);
       setEndingReady(false);
+      setEpilogueVisualReady(false);
       setEndingLeaving(false);
       setEndingPlaying(true);
     }, audio);
@@ -4305,6 +4307,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
     const video = epilogueVideoRef.current;
     const soundtrack = epilogueMusicRef.current;
     if (!video || !soundtrack) return;
+    setEpilogueVisualReady(false);
     video.currentTime = 0;
     soundtrack.currentTime = 0;
     soundtrack.volume = 0.02;
@@ -4511,7 +4514,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
             <source src="/assets/ending-epilogue-country-v1.mp3" type="audio/mpeg" />
           </audio>
           {endingPlaying && (
-            <div className={`ending-cinematic is-${endingPhase} ${endingReady ? "is-ready" : ""}`} aria-label="通关结尾">
+            <div className={`ending-cinematic is-${endingPhase} ${endingReady ? "is-ready" : ""} ${epilogueVisualReady ? "is-epilogue-video-ready" : ""}`} aria-label="通关结尾">
               <video
                 ref={endingVideoRef}
                 className="ending-cinematic-video"
@@ -4525,6 +4528,12 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
               >
                 <source src="/assets/victory-ending.mp4" type="video/mp4" />
               </video>
+              <img
+                className="ending-epilogue-poster"
+                src="/assets/ending-epilogue-poster02.png"
+                alt=""
+                aria-hidden="true"
+              />
               <video
                 ref={epilogueVideoRef}
                 className="ending-epilogue-video"
@@ -4534,13 +4543,20 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 preload="auto"
                 poster="/assets/ending-epilogue-poster02.png"
                 aria-hidden="true"
+                onLoadedData={() => {
+                  if (endingPhase === "epilogue") setEpilogueVisualReady(true);
+                }}
+                onPlaying={() => {
+                  if (endingPhase === "epilogue") setEpilogueVisualReady(true);
+                }}
                 onCanPlay={() => {
                   if (endingPhase !== "epilogue") return;
                   const player = epilogueVideoRef.current;
                   if (player?.paused) void player.play().catch(() => setEndingNeedsGesture(true));
                 }}
+                onError={() => setEpilogueVisualReady(false)}
               >
-                <source src="/assets/ending-epilogue-pingpong-v1.mp4" type="video/mp4" />
+                <source src="/assets/ending-epilogue-pingpong-mobile-v2.mp4" type="video/mp4" />
               </video>
               {endingPhase === "epilogue" && (
                 <>
