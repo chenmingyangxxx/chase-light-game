@@ -71,6 +71,13 @@ const FIXING_INSTALL_RAMP_MS = 720;
 const FIXING_INSTALL_GRACE_MS = 1100;
 const GROUND_FIXING_INSTALL_RAMP_MS = 1000;
 const GROUND_FIXING_INSTALL_GRACE_MS = 2200;
+// Matter constraints become numerically aggressive near stiffness=1. Keep the
+// material strength model intact, but cap the solver coefficient and add
+// damping so a fixing stabilises the tower instead of injecting energy into it.
+const FIXING_BRACE_SOLVER_MAX_STIFFNESS = 0.32;
+const FIXING_TIE_SOLVER_MAX_STIFFNESS = 0.2;
+const FIXING_BRACE_SOLVER_MIN_DAMPING = 0.18;
+const FIXING_TIE_SOLVER_MIN_DAMPING = 0.12;
 // Keep the robot's authored real-world profile, but soften the effective
 // moving payload by 50% so the climb remains readable without making every
 // otherwise sound tower fail under a single gait cycle.
@@ -257,16 +264,6 @@ interface ClientBounds {
 }
 
 type MaterialDragKind = "build" | "fixing";
-
-interface PendingMaterialTouch {
-  pointerId: number;
-  kind: MaterialDragKind;
-  materialId: ItemId | FixingMaterialId;
-  startX: number;
-  startY: number;
-  originBounds: ClientBounds;
-  target: HTMLButtonElement;
-}
 
 interface FixingDraft {
   materialId: FixingMaterialId;
@@ -1884,8 +1881,12 @@ class TowerPhysicsGame {
         bodyB: anchorB.body,
         pointB: anchorB.local,
         length: restLength,
-        stiffness: 0.055,
-        damping: 0.035,
+        // Start fully neutral. updateFixingLinks captures the settled span and
+        // ramps this up after the installation grace period. A non-zero brace
+        // coefficient here lets Matter solve one frame before that grace logic
+        // runs, which is enough to kick a tall tower sideways.
+        stiffness: 0.00001,
+        damping: 0,
         label: `fixing:${materialId}`,
       }));
       World.add(this.engine.world, constraints[0]);
@@ -1935,6 +1936,28 @@ class TowerPhysicsGame {
       const deltaX = pointB.x - pointA.x;
       const deltaY = pointB.y - pointA.y;
       const length = Math.max(1, Math.hypot(deltaX, deltaY));
+      const hasGroundAnchor = link.anchorA.ground || link.anchorB.ground;
+      const installAge = this.elapsed - link.installedAt;
+      const installRampMs = hasGroundAnchor ? GROUND_FIXING_INSTALL_RAMP_MS : FIXING_INSTALL_RAMP_MS;
+      const installGraceMs = hasGroundAnchor ? GROUND_FIXING_INSTALL_GRACE_MS : FIXING_INSTALL_GRACE_MS;
+
+      // During the settle window the link follows both anchors without any
+      // preload. This is important for ground links: fixing one endpoint to an
+      // immovable body while the tower is still settling otherwise creates a
+      // one-frame catapult force. Capture the final settled length, then begin
+      // the stiffness ramp from zero.
+      if (installAge < installGraceMs) {
+        link.restLength = length;
+        link.constraints.forEach((constraint) => {
+          constraint.length = length;
+          constraint.stiffness = 0.00001;
+          constraint.damping = 0;
+        });
+        link.loadRatio = 0;
+        link.damage = Math.max(0, link.damage - delta * 0.00012);
+        continue;
+      }
+
       const unitX = deltaX / length;
       const unitY = deltaY / length;
       const signedStrain = (length - link.restLength) / Math.max(1, link.restLength);
@@ -1944,27 +1967,20 @@ class TowerPhysicsGame {
       const relativeY = velocityB.y - velocityA.y;
       const axialSpeed = Math.abs(relativeX * unitX + relativeY * unitY);
       const shearSpeed = Math.abs(relativeX * -unitY + relativeY * unitX);
-      // Ramp a newly installed fixing into service instead of applying full
-      // stiffness and damping in a single physics frame. Ground anchors get a
-      // slightly longer settle window because one end cannot share the moving
-      // tower's velocity at the moment of installation.
-      const hasGroundAnchor = link.anchorA.ground || link.anchorB.ground;
-      const installAge = this.elapsed - link.installedAt;
-      const installRampMs = hasGroundAnchor ? GROUND_FIXING_INSTALL_RAMP_MS : FIXING_INSTALL_RAMP_MS;
-      const installGraceMs = hasGroundAnchor ? GROUND_FIXING_INSTALL_GRACE_MS : FIXING_INSTALL_GRACE_MS;
-      const installBlend = smoothStep(clamp(installAge / installRampMs, 0, 1));
+      const installBlend = smoothStep(clamp((installAge - installGraceMs) / installRampMs, 0, 1));
 
       const tieTaut = definition.mode === "tie" && length > link.restLength * 1.001;
       if (definition.mode === "tie") {
-        const taut = tieTaut;
-        link.constraints[0].stiffness = taut ? Math.max(0.00001, definition.stiffness * installBlend) : 0.00001;
-        link.constraints[0].damping = taut ? definition.damping * installBlend : 0;
+        const targetStiffness = Math.min(definition.stiffness, FIXING_TIE_SOLVER_MAX_STIFFNESS);
+        const targetDamping = Math.max(definition.damping, FIXING_TIE_SOLVER_MIN_DAMPING);
+        link.constraints[0].stiffness = tieTaut ? Math.max(0.00001, targetStiffness * installBlend) : 0.00001;
+        link.constraints[0].damping = tieTaut ? targetDamping * installBlend : 0;
       } else {
+        const targetStiffness = Math.min(definition.stiffness, FIXING_BRACE_SOLVER_MAX_STIFFNESS);
+        const targetDamping = Math.max(definition.damping, FIXING_BRACE_SOLVER_MIN_DAMPING);
         link.constraints.forEach((constraint) => {
-          const stiffnessFloor = hasGroundAnchor ? 0.085 : 0.055;
-          const dampingFloor = hasGroundAnchor ? 0.05 : 0.035;
-          constraint.stiffness = stiffnessFloor + (definition.stiffness - stiffnessFloor) * installBlend;
-          constraint.damping = dampingFloor + (definition.damping - dampingFloor) * installBlend;
+          constraint.stiffness = Math.max(0.00001, targetStiffness * installBlend);
+          constraint.damping = targetDamping * installBlend;
         });
       }
 
@@ -1995,14 +2011,6 @@ class TowerPhysicsGame {
       const shearRatio = shearN / Math.max(1, definition.shearN * STRENGTH_MULTIPLIER);
       const ratio = Math.max(tensionRatio, compressionRatio, shearRatio);
       link.loadRatio = ratio;
-      // Installation transients are not material fatigue. Without this grace
-      // period, a valid ground link can exceed its limit for one solver frame,
-      // be marked broken and then fade away before the player can see why.
-      if (installAge < installGraceMs) {
-        link.loadRatio = Math.min(ratio, 0.98);
-        link.damage = Math.max(0, link.damage - delta * 0.00012);
-        continue;
-      }
       if (ratio > 1) {
         const groundDamageScale = hasGroundAnchor ? 0.55 : 1;
         link.damage += delta * (0.00042 + (ratio - 1) * 0.00072) * groundDamageScale;
@@ -4241,7 +4249,6 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const epilogueMusicRef = useRef<HTMLAudioElement>(null);
   const endingMusicFadeRef = useRef<(() => void) | null>(null);
   const epilogueMusicFadeRef = useRef<(() => void) | null>(null);
-  const pendingMaterialTouchRef = useRef<PendingMaterialTouch | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot>(() => initialSnapshot(level));
   const [confirmation, setConfirmation] = useState<ConfirmationAction>(null);
   const [endingPlaying, setEndingPlaying] = useState(false);
@@ -4274,56 +4281,6 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
       gameRef.current = null;
     };
   }, [audio, level]);
-
-  useEffect(() => {
-    const movePendingMaterial = (event: PointerEvent) => {
-      const pending = pendingMaterialTouchRef.current;
-      if (!pending || pending.pointerId !== event.pointerId) return;
-      const deltaX = event.clientX - pending.startX;
-      const deltaY = event.clientY - pending.startY;
-      if (Math.hypot(deltaX, deltaY) < 9) return;
-
-      // A mostly vertical gesture belongs to the material list. Do not capture
-      // it or call preventDefault, so phones retain native inertial scrolling.
-      if (Math.abs(deltaY) > Math.abs(deltaX) * 1.08) {
-        pendingMaterialTouchRef.current = null;
-        return;
-      }
-
-      event.preventDefault();
-      pending.target.setPointerCapture?.(event.pointerId);
-      if (pending.kind === "build") {
-        gameRef.current?.startHolding(
-          pending.materialId as ItemId,
-          event.clientX,
-          event.clientY,
-          event.pointerId,
-        );
-      } else {
-        gameRef.current?.startHoldingFixing(
-          pending.materialId as FixingMaterialId,
-          event.clientX,
-          event.clientY,
-          event.pointerId,
-          pending.originBounds,
-        );
-      }
-      pendingMaterialTouchRef.current = null;
-    };
-    const clearPendingMaterial = (event: PointerEvent) => {
-      if (pendingMaterialTouchRef.current?.pointerId === event.pointerId) {
-        pendingMaterialTouchRef.current = null;
-      }
-    };
-    window.addEventListener("pointermove", movePendingMaterial, { capture: true, passive: false });
-    window.addEventListener("pointerup", clearPendingMaterial, true);
-    window.addEventListener("pointercancel", clearPendingMaterial, true);
-    return () => {
-      window.removeEventListener("pointermove", movePendingMaterial, true);
-      window.removeEventListener("pointerup", clearPendingMaterial, true);
-      window.removeEventListener("pointercancel", clearPendingMaterial, true);
-    };
-  }, []);
 
   useEffect(() => {
     if (snapshot.status === "failed" && !reportedFailureRef.current) {
@@ -4432,19 +4389,6 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
     void audio.unlock();
     const rect = event.currentTarget.getBoundingClientRect();
     const originBounds = { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
-    if (event.pointerType === "touch") {
-      pendingMaterialTouchRef.current = {
-        pointerId: event.pointerId,
-        kind,
-        materialId,
-        startX: event.clientX,
-        startY: event.clientY,
-        originBounds,
-        target: event.currentTarget,
-      };
-      return;
-    }
-
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     if (kind === "build") {
@@ -4496,7 +4440,11 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 <strong id="building-material-title">搭建物料</strong>
                 <span>{availablePieces}</span>
               </header>
-              <div className="inventory-section-list inventory-list" aria-label="搭建物料列表">
+              <div
+                className="inventory-section-list inventory-list"
+                aria-label="搭建物料列表"
+                style={{ "--inventory-item-count": Math.max(1, inventoryItems.length) } as CSSProperties}
+              >
                 {inventoryItems
                   .map((id) => {
                     const item = ITEMS[id];
@@ -4531,7 +4479,11 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 <strong id="fixing-material-title">辅助固定材料</strong>
                 <span>{availableFixings}</span>
               </header>
-              <div className="inventory-section-list inventory-list" aria-label="辅助固定材料列表">
+              <div
+                className="inventory-section-list inventory-list"
+                aria-label="辅助固定材料列表"
+                style={{ "--inventory-item-count": Math.max(1, fixingItems.length) } as CSSProperties}
+              >
                 {fixingItems.map((id) => {
                   const material = FIXING_MATERIALS[id];
                   const count = snapshot.fixingInventory[id];

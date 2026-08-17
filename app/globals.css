@@ -1410,12 +1410,12 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Both material categories remain visible and independently scrollable. The
-   rail itself is intentionally transparent: the two modules are defined by
-   their own headers and cards, without nested full-height backing plates. */
+/* Both material categories remain visible at once. Cards share the available
+   height instead of turning the narrow rail into a nested scroll surface, so
+   a touch on a card always means drag and never competes with list scrolling. */
 .minimal-game .inventory-panel {
   display: grid;
-  grid-template-rows: minmax(0, 1.08fr) minmax(0, .82fr);
+  grid-template-rows: minmax(0, 8fr) minmax(0, 3fr);
   gap: 9px;
   padding: 0;
   overflow: hidden;
@@ -1483,21 +1483,22 @@ body {
 }
 
 .minimal-game .inventory-section-list.inventory-list {
-  display: flex;
+  display: grid;
   min-height: 0;
   max-height: none;
   flex: 1 1 auto;
-  flex-direction: column;
-  gap: 5px;
-  padding: 5px 0 14px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scroll-padding-block: 5px 14px;
-  touch-action: pan-y;
-  scrollbar-color: rgba(174, 214, 156, .48) transparent;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
+  grid-template-rows: repeat(var(--inventory-item-count, 1), minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px 0 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.minimal-game .inventory-section-list .material-card {
+  height: 100%;
+  min-height: 0;
+  flex: initial;
+  touch-action: none;
 }
 
 .minimal-game .fixing-card {
@@ -1555,7 +1556,7 @@ body {
 
 @media (max-width: 600px) {
   .minimal-game .inventory-panel {
-    grid-template-rows: minmax(0, 3fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 8fr) minmax(0, 3fr);
     gap: 7px;
   }
   .minimal-game .inventory-section { padding: 0; }
@@ -1611,13 +1612,12 @@ body {
   }
   .minimal-game .inventory-section-list.inventory-list {
     gap: 3px;
-    padding: 4px 0 12px;
-    scroll-padding-bottom: 12px;
+    padding: 3px 0 0;
   }
   .minimal-game .material-card {
     grid-template-columns: 31px minmax(0, 1fr);
     gap: 3px;
-    min-height: 44px;
+    min-height: 0;
     padding: 3px;
     border-radius: 6px;
   }
@@ -1655,8 +1655,17 @@ body {
 
 @media (max-width: 600px) and (max-height: 720px) {
   .minimal-game .inventory-panel {
-    grid-template-rows: minmax(0, 4fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 8fr) minmax(0, 3fr);
   }
+  .minimal-game .inventory-section-head { min-height: 21px; }
+  .minimal-game .inventory-section-list.inventory-list { gap: 2px; padding-top: 2px; }
+  .minimal-game .material-card {
+    grid-template-columns: 27px minmax(0, 1fr);
+    gap: 2px;
+    padding: 2px;
+  }
+  .minimal-game .material-icon { width: 26px; height: 28px; }
+  .minimal-game .material-copy b { font-size: 8px; line-height: 1.05; }
 }
 
 @media (max-height: 720px) {
