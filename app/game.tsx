@@ -119,10 +119,14 @@ function preloadGameplayScene() {
   if (gameplayPreloadPromise) return gameplayPreloadPromise;
   gameplayPreloadPromise = Promise.all(
     GAMEPLAY_CRITICAL_ASSETS.map((source, index) => preloadImage(source, index === 0)),
-  ).then(() => undefined);
-  // The restored world and animation sheets are not needed for the first
-  // interactive frame. Warm them after the critical scene without delaying it.
-  void Promise.all(GAMEPLAY_DEFERRED_ASSETS.map((source) => preloadImage(source)));
+  ).then(() => {
+    // The restored world and animation sheets are not needed for the first
+    // interactive frame. Delay their warm-up so they never compete with the
+    // launch film, soundtrack, or the critical construction scene.
+    window.setTimeout(() => {
+      void Promise.all(GAMEPLAY_DEFERRED_ASSETS.map((source) => preloadImage(source)));
+    }, 1200);
+  });
   return gameplayPreloadPromise;
 }
 
@@ -4506,8 +4510,8 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
           )}
           {/* Instrumental score only: there is no spoken content to caption. */}
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio ref={endingMusicRef} preload="auto" aria-hidden="true">
-            <source src="/assets/victory-ending-pingpong.wav" type="audio/wav" />
+          <audio ref={endingMusicRef} preload="none" aria-hidden="true">
+            <source src="/assets/victory-ending-pingpong-v1.m4a" type="audio/mp4" />
           </audio>
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <audio ref={epilogueMusicRef} loop preload="auto" aria-hidden="true">
@@ -4624,7 +4628,12 @@ export function DawnTowerGame() {
 
   useEffect(() => {
     reportGameEvent("page_view", { surface: "launch" });
-    void preloadGameplayScene();
+    // Give the launch film and its soundtrack the network first. Returning
+    // visitors still get a warm gameplay cache before they normally press play.
+    const preloadTimer = window.setTimeout(() => {
+      void preloadGameplayScene();
+    }, 2200);
+    return () => window.clearTimeout(preloadTimer);
   }, []);
 
   const fadeLaunchMusicTo = (target: number, durationMs: number, pauseAtEnd = false) => {
@@ -4726,7 +4735,7 @@ export function DawnTowerGame() {
 
   const launchSoundtrack = (
     <audio key="launch-soundtrack" ref={launchAudioRef} loop preload="auto" aria-hidden="true">
-      <source src="/assets/launch-original-with-music.mp4" type="audio/mp4" />
+      <source src="/assets/launch-soundtrack-v1.m4a" type="audio/mp4" />
     </audio>
   );
 
@@ -4763,10 +4772,10 @@ export function DawnTowerGame() {
           muted
           playsInline
           preload="auto"
-          poster="/assets/startup-wasteland-sprout.png"
+          poster="/assets/startup-wasteland-sprout.webp"
           aria-hidden="true"
         >
-          <source src="/assets/launch-background-pingpong.mp4" type="video/mp4" />
+          <source src="/assets/launch-background-pingpong-fast-v1.mp4" type="video/mp4" />
         </video>
         <div className="launch-shade" aria-hidden="true" />
         {!ready && (

@@ -770,7 +770,7 @@ body {
   height: 100%;
   object-fit: cover;
   object-position: center center;
-  background: #091416 url("/assets/startup-wasteland-sprout.png") center 35% / cover no-repeat;
+  background: #091416 url("/assets/startup-wasteland-sprout.webp") center 35% / cover no-repeat;
   pointer-events: none;
 }
 .launch-shade {
@@ -1222,7 +1222,7 @@ body {
 .scene-loading-screen::before {
   position: absolute;
   inset: 0;
-  background-image: url('/assets/startup-wasteland-sprout.png');
+  background-image: url('/assets/startup-wasteland-sprout.webp');
   background-position: center;
   background-size: cover;
   content: '';
