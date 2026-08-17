@@ -606,7 +606,7 @@ body {
   opacity: 0;
   filter: brightness(.76) saturate(.9);
   transform: scale(1.012);
-  transition: opacity 1.8s cubic-bezier(.22, .7, .2, 1), transform 2.2s cubic-bezier(.22, .7, .2, 1);
+  transition: opacity .6s cubic-bezier(.22, .7, .2, 1), transform .9s cubic-bezier(.22, .7, .2, 1);
 }
 .ending-epilogue-background {
   position: absolute;
@@ -1254,7 +1254,7 @@ body {
 
 .ending-cinematic {
   background: rgba(3, 7, 8, 0);
-  transition: background-color 1600ms ease;
+  transition: background-color 450ms ease;
 }
 .ending-cinematic::before {
   position: absolute;
@@ -1280,12 +1280,12 @@ body {
 .ending-cinematic.is-ready.is-black .ending-cinematic-video,
 .ending-cinematic.is-ready.is-epilogue .ending-cinematic-video {
   opacity: 0;
-  transition-duration: 1600ms;
+  transition-duration: 450ms;
 }
 .ending-cinematic.is-epilogue .ending-epilogue-video {
   opacity: 1;
   transform: scale(1);
-  transition-duration: 2400ms, 2800ms;
+  transition-duration: 600ms, 900ms;
 }
 
 /* Peer material modes share the existing inventory shell. */
@@ -1560,6 +1560,74 @@ body {
     gap: 6px;
     padding: 7px 9px;
     font-size: 10px;
+  }
+}
+
+/* Portrait phones reserve most of the width for the physical play field. The
+   rail is roughly one third narrower than the former 36vw layout, while cards
+   keep a minimum touch height and permit two readable title lines. */
+@media (max-width: 600px) and (orientation: portrait) {
+  .minimal-game { --game-rail-width: clamp(94px, 24vw, 104px); }
+  .minimal-game .inventory-panel {
+    right: 4px;
+    bottom: 89px;
+    gap: 5px;
+  }
+  .minimal-game .inventory-section-head {
+    min-height: 24px;
+    padding: 0 4px;
+  }
+  .minimal-game .inventory-section-head strong {
+    font-size: 9px;
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+  .minimal-game .inventory-section-head span {
+    min-width: 17px;
+    min-height: 16px;
+    padding: 0 3px;
+    font-size: 7px;
+  }
+  .minimal-game .inventory-section-list.inventory-list {
+    gap: 3px;
+    padding-top: 4px;
+  }
+  .minimal-game .material-card {
+    grid-template-columns: 31px minmax(0, 1fr);
+    gap: 3px;
+    min-height: 44px;
+    padding: 3px;
+    border-radius: 6px;
+  }
+  .minimal-game .material-icon {
+    width: 30px;
+    height: 34px;
+    border-radius: 5px;
+  }
+  .minimal-game .material-copy b {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 9px;
+    line-height: 1.15;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .minimal-game .material-copy small { display: none; }
+  .minimal-game .material-count {
+    top: 2px;
+    right: 2px;
+    padding: 1px 2px;
+    font-size: 7px;
+  }
+  .minimal-game .stage-actions {
+    right: 4px;
+    width: var(--game-rail-width);
+    gap: 4px;
+  }
+  .minimal-game .stage-action {
+    height: 35px;
+    font-size: 11px;
   }
 }
 

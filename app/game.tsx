@@ -8,6 +8,7 @@ import {
   fixingInventoryFor,
   type FixingMaterialId,
 } from "./fixing-materials";
+import { reportGameEvent } from "./telemetry";
 
 const { Bodies, Body, Composite, Constraint, Engine, Events, Vector, World } = Matter;
 
@@ -80,6 +81,50 @@ const MIN_CAMERA_OFFSET = VIEW_GROUND_CAMERA - 20;
 // At maximum ascent the crane arm, basket, flower and tower crown all remain
 // inside the portrait viewport instead of being clipped above its top edge.
 const MAX_CAMERA_OFFSET = 100 - GOAL_RIG_TOP_Y;
+
+const GAMEPLAY_CRITICAL_ASSETS = [
+  "/assets/wasteland-gameplay-polluted-full-v7.webp",
+  "/assets/front-prop-atlas-v2.png",
+  "/assets/front-risky-props-v2.png",
+  "/assets/crane-boom-cast-iron-v1.png",
+  "/assets/crane-basket-sprout-v3.png",
+] as const;
+
+const GAMEPLAY_DEFERRED_ASSETS = [
+  "/assets/wasteland-gameplay-revived-full-v7.webp",
+  "/assets/ground-debris-foreground.png",
+  "/assets/robot-climb-frames-v3.png",
+  "/assets/robot-pluck-grid-v4.png",
+] as const;
+
+let gameplayPreloadPromise: Promise<void> | null = null;
+
+function preloadImage(source: string, priority = false) {
+  return new Promise<void>((resolve) => {
+    const image = new Image();
+    image.decoding = "async";
+    if (priority) image.setAttribute("fetchpriority", "high");
+    image.onload = () => {
+      const decoding = image.decode?.();
+      if (decoding) void decoding.catch(() => undefined).finally(resolve);
+      else resolve();
+    };
+    image.onerror = () => resolve();
+    image.src = source;
+  });
+}
+
+function preloadGameplayScene() {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (gameplayPreloadPromise) return gameplayPreloadPromise;
+  gameplayPreloadPromise = Promise.all(
+    GAMEPLAY_CRITICAL_ASSETS.map((source, index) => preloadImage(source, index === 0)),
+  ).then(() => undefined);
+  // The restored world and animation sheets are not needed for the first
+  // interactive frame. Warm them after the critical scene without delaying it.
+  void Promise.all(GAMEPLAY_DEFERRED_ASSETS.map((source) => preloadImage(source)));
+  return gameplayPreloadPromise;
+}
 
 type Shape = "box" | "circle";
 type ItemRole = "foundation" | "bridge" | "block" | "tall" | "risky";
@@ -989,8 +1034,8 @@ class TowerPhysicsGame {
     this.artwork = {
       // These two complete-width paintings are the canonical gameplay pair.
       // Cover cropping adapts them to phone and desktop without stretching.
-      polluted: this.loadArtwork("/assets/wasteland-gameplay-polluted-full-v7.png"),
-      revived: this.loadArtwork("/assets/wasteland-gameplay-revived-full-v7.png"),
+      polluted: this.loadArtwork("/assets/wasteland-gameplay-polluted-full-v7.webp"),
+      revived: this.loadArtwork("/assets/wasteland-gameplay-revived-full-v7.webp"),
       // The same orthographic asset sheets are used both in the inventory and
       // in the physical world so a placed object keeps its front-facing form.
       junk: this.loadArtwork("/assets/front-prop-atlas-v2.png"),
@@ -2110,7 +2155,7 @@ class TowerPhysicsGame {
     const hasRealStack = towerBodies.some((body) => (supportGraph.depth.get(body) ?? 0) >= 2);
     if (this.status === "building" && hasRealStack && this.hasReachedRequiredHeight(towerBodies, supportGraph.depth)) {
       this.activateLight();
-      if (this.status === "activating") return;
+      return;
     }
 
     this.updateStructuralStress(supportGraph, delta);
@@ -4142,10 +4187,10 @@ interface GameStageProps {
 type ConfirmationAction = "reset" | "exit" | null;
 type EndingPhase = "video" | "hold" | "fading" | "black" | "epilogue";
 
-const ENDING_LAST_FRAME_HOLD_MS = 500;
-const ENDING_FADE_TO_BLACK_MS = 1600;
-const ENDING_BLACK_HOLD_MS = 2000;
-const EPILOGUE_FADE_IN_MS = 2400;
+const ENDING_LAST_FRAME_HOLD_MS = 150;
+const ENDING_FADE_TO_BLACK_MS = 450;
+const ENDING_BLACK_HOLD_MS = 250;
+const EPILOGUE_FADE_IN_MS = 600;
 
 function GameStage({ level, onExit, audio }: GameStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -4163,12 +4208,14 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   const [, setEndingNeedsGesture] = useState(false);
   const [endingReady, setEndingReady] = useState(false);
   const [endingLeaving, setEndingLeaving] = useState(false);
+  const reportedFailureRef = useRef(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     audio.startGameplay();
     const game = new TowerPhysicsGame(canvas, level, setSnapshot, () => {
+      reportGameEvent("game_complete", { targetHeightMeters: GOAL_REACH_HEIGHT });
       audio.stopGameplay(1100);
       setEndingPhase("video");
       setEndingNeedsGesture(false);
@@ -4186,6 +4233,18 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
   }, [audio, level]);
 
   useEffect(() => {
+    if (snapshot.status === "failed" && !reportedFailureRef.current) {
+      reportedFailureRef.current = true;
+      reportGameEvent("game_failed", {
+        reason: snapshot.failureTitle,
+        heightMeters: Math.round(snapshot.height * 10) / 10,
+      });
+    } else if (snapshot.status === "building") {
+      reportedFailureRef.current = false;
+    }
+  }, [snapshot.failureTitle, snapshot.height, snapshot.status]);
+
+  useEffect(() => {
     if (!confirmation) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setConfirmation(null);
@@ -4199,11 +4258,15 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
     const video = endingVideoRef.current;
     const soundtrack = endingMusicRef.current;
     if (!video || !soundtrack) return;
+    // Buffer the mobile epilogue while the completion film is playing. This
+    // avoids arriving at the final state with sound but an unpainted video.
+    epilogueVideoRef.current?.load();
     video.currentTime = 0;
     soundtrack.currentTime = 0;
     soundtrack.volume = 0.02;
     endingMusicFadeRef.current?.();
-    void Promise.all([video.play(), soundtrack.play()])
+    void video.play().catch(() => setEndingNeedsGesture(true));
+    void soundtrack.play()
       .then(() => {
         endingMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.72, 1100);
       })
@@ -4246,7 +4309,11 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
     soundtrack.currentTime = 0;
     soundtrack.volume = 0.02;
     epilogueMusicFadeRef.current?.();
-    void Promise.all([video.play(), soundtrack.play()])
+    // Start picture and soundtrack independently. Mobile browsers can reject
+    // an audible play request even while muted inline video is allowed; one
+    // rejection must not prevent the other medium from appearing.
+    void video.play().catch(() => setEndingNeedsGesture(true));
+    void soundtrack.play()
       .then(() => {
         epilogueMusicFadeRef.current = fadeMediaVolume(soundtrack, 0.68, EPILOGUE_FADE_IN_MS);
       })
@@ -4273,6 +4340,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
             aria-label="搭建物料与辅助固定材料物理建造区"
             onPointerDown={(event) => {
               event.preventDefault();
+              void audio.unlock();
               event.currentTarget.setPointerCapture?.(event.pointerId);
               gameRef.current?.beginCanvasInteraction(event.clientX, event.clientY, event.pointerId);
             }}
@@ -4312,6 +4380,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                         disabled={!isInteractive || count === 0}
                         onPointerDown={(event) => {
                           event.preventDefault();
+                          void audio.unlock();
                           event.currentTarget.setPointerCapture?.(event.pointerId);
                           gameRef.current?.startHolding(item.id, event.clientX, event.clientY, event.pointerId);
                         }}
@@ -4352,6 +4421,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                       aria-pressed={dragging}
                       onPointerDown={(event) => {
                         event.preventDefault();
+                        void audio.unlock();
                         event.currentTarget.setPointerCapture?.(event.pointerId);
                         const rect = event.currentTarget.getBoundingClientRect();
                         gameRef.current?.startHoldingFixing(
@@ -4389,6 +4459,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                   <button className="dialog-button primary" type="button" onClick={() => {
                     audio.ui();
                     setConfirmation(null);
+                    reportGameEvent("game_reset", { source: "failure_dialog" });
                     gameRef.current?.restart();
                   }}>
                     重新搭建
@@ -4417,7 +4488,10 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                     onClick={() => {
                       audio.ui();
                       setConfirmation(null);
-                      if (confirmation === "reset") gameRef.current?.restart();
+                      if (confirmation === "reset") {
+                        reportGameEvent("game_reset", { source: "confirmation" });
+                        gameRef.current?.restart();
+                      }
                       else onExit();
                     }}
                   >
@@ -4458,7 +4532,13 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                 loop
                 playsInline
                 preload="auto"
+                poster="/assets/ending-epilogue-poster02.png"
                 aria-hidden="true"
+                onCanPlay={() => {
+                  if (endingPhase !== "epilogue") return;
+                  const player = epilogueVideoRef.current;
+                  if (player?.paused) void player.play().catch(() => setEndingNeedsGesture(true));
+                }}
               >
                 <source src="/assets/ending-epilogue-pingpong-v1.mp4" type="video/mp4" />
               </video>
@@ -4526,6 +4606,11 @@ export function DawnTowerGame() {
   const [sceneLoading, setSceneLoading] = useState(false);
   const [sceneLoadProgress, setSceneLoadProgress] = useState(0);
 
+  useEffect(() => {
+    reportGameEvent("page_view", { surface: "launch" });
+    void preloadGameplayScene();
+  }, []);
+
   const fadeLaunchMusicTo = (target: number, durationMs: number, pauseAtEnd = false) => {
     const player = launchAudioRef.current;
     if (!player) return;
@@ -4550,8 +4635,14 @@ export function DawnTowerGame() {
 
   const startGame = async () => {
     if (launchLeaving) return;
+    reportGameEvent("game_start", { targetHeightMeters: GOAL_REACH_HEIGHT });
     setLaunchLeaving(true);
+    const assetsReady = preloadGameplayScene();
     try {
+      // Mark the gameplay layer active before resuming the AudioContext. On
+      // iOS the resume must happen inside this pointer gesture; unlock() will
+      // immediately start the already-active ambience without a late mount.
+      audio.startGameplay();
       await audio.unlock();
       audio.setEnabled(true);
       audio.ui();
@@ -4567,16 +4658,17 @@ export function DawnTowerGame() {
       const progressTimer = window.setInterval(() => {
         setSceneLoadProgress((value) => Math.min(94, value + (value < 60 ? 11 : 5)));
       }, 70);
-      window.setTimeout(() => {
+      const minimumLoadingTime = new Promise<void>((resolve) => window.setTimeout(resolve, 360));
+      void Promise.all([assetsReady, minimumLoadingTime]).finally(() => {
         window.clearInterval(progressTimer);
         setSceneLoadProgress(100);
         window.setTimeout(() => {
           setStarted(true);
           setSceneLoading(false);
           setLaunchLeaving(false);
-        }, 140);
-      }, 820);
-    }, 620);
+        }, 100);
+      });
+    }, 360);
   };
 
   useEffect(() => {
@@ -4775,6 +4867,7 @@ export function DawnTowerGame() {
           level={level}
           audio={audio}
           onExit={() => {
+            reportGameEvent("game_exit", { source: "in_game" });
             audio.stopGameplay();
             setStarted(false);
           }}
