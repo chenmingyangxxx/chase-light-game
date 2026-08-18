@@ -1487,7 +1487,10 @@ body {
   min-height: 0;
   max-height: none;
   flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: repeat(var(--inventory-item-count, 1), minmax(0, 1fr));
+  grid-auto-flow: row;
+  align-content: start;
   gap: 4px;
   padding: 4px 0 0;
   overflow: hidden;
@@ -1589,7 +1592,10 @@ body {
    rail is roughly one third narrower than the former 36vw layout, while cards
    keep a minimum touch height and permit two readable title lines. */
 @media (max-width: 600px) and (orientation: portrait) {
-  .minimal-game { --game-rail-width: clamp(86px, 22vw, 96px); }
+  .minimal-game {
+    --game-rail-width: clamp(92px, 22.5vw, 102px);
+    --inventory-card-row: clamp(38px, 5.7vh, 48px);
+  }
   .minimal-game .inventory-panel {
     right: 4px;
     bottom: 89px;
@@ -1611,6 +1617,10 @@ body {
     font-size: 7px;
   }
   .minimal-game .inventory-section-list.inventory-list {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(var(--inventory-item-count, 1), var(--inventory-card-row));
+    grid-auto-flow: row;
+    align-content: start;
     gap: 3px;
     padding: 3px 0 0;
   }
@@ -1670,6 +1680,108 @@ body {
 
 @media (max-height: 720px) {
   .minimal-game .inventory-tab { min-height: 31px; padding-block: 4px; }
+}
+
+/* Keep the material rail structurally identical across every compact browser
+   viewport. Some mobile browsers report a CSS width above 600px (or briefly
+   switch orientation while their chrome collapses), which previously let the
+   old two-column inventory rule leak back in and turn Chinese labels vertical. */
+@media (max-width: 700px) {
+  .minimal-game {
+    --game-rail-width: clamp(94px, 22.5vw, 112px);
+    --inventory-card-row: clamp(32px, 5.7vh, 48px);
+  }
+
+  .minimal-game .inventory-panel {
+    right: 4px;
+    bottom: 89px;
+    gap: 5px;
+  }
+
+  .minimal-game .inventory-section-head {
+    min-height: 23px;
+    padding: 0 4px;
+  }
+
+  .minimal-game .inventory-section-head strong {
+    overflow: hidden;
+    font-size: 9px;
+    letter-spacing: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .minimal-game .inventory-section-head span {
+    min-width: 17px;
+    min-height: 16px;
+    padding: 0 3px;
+    font-size: 7px;
+  }
+
+  .minimal-game .inventory-section-list.inventory-list {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(var(--inventory-item-count, 1), var(--inventory-card-row));
+    grid-auto-flow: row;
+    align-content: start;
+    gap: 3px;
+    padding: 3px 0 0;
+  }
+
+  .minimal-game .inventory-section-list .material-card {
+    grid-template-columns: clamp(26px, 31%, 34px) minmax(0, 1fr);
+    gap: 3px;
+    min-width: 0;
+    min-height: 0;
+    padding: 3px;
+    border-radius: 6px;
+  }
+
+  .minimal-game .inventory-section-list .material-icon {
+    width: 100%;
+    max-width: 34px;
+    height: auto;
+    aspect-ratio: 1;
+    align-self: center;
+    justify-self: start;
+    border-radius: 5px;
+  }
+
+  .minimal-game .inventory-section-list .material-copy {
+    min-width: 0;
+    padding-right: 11px;
+    writing-mode: horizontal-tb;
+  }
+
+  .minimal-game .inventory-section-list .material-copy b {
+    display: -webkit-box;
+    overflow: hidden;
+    max-width: 100%;
+    font-size: 9px;
+    line-height: 1.12;
+    overflow-wrap: anywhere;
+    text-align: left;
+    text-overflow: clip;
+    white-space: normal;
+    writing-mode: horizontal-tb;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .minimal-game .inventory-section-list .material-copy small {
+    display: none;
+  }
+
+  .minimal-game .inventory-section-list .material-count {
+    top: 2px;
+    right: 2px;
+    padding: 1px 2px;
+    font-size: 7px;
+  }
+
+  .minimal-game .stage-actions {
+    right: 4px;
+    width: var(--game-rail-width);
+  }
 }
 
 @keyframes collapse-waiting-pulse {

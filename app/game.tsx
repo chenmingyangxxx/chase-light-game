@@ -16,7 +16,7 @@ import {
 } from "./fixing-materials";
 import { reportGameEvent } from "./telemetry";
 
-const { Bodies, Body, Composite, Constraint, Engine, Events, Vector, World } = Matter;
+const { Bodies, Body, Composite, Engine, Events, Vector, World } = Matter;
 
 // The playable camera is portrait first. The physics world remains taller than
 // one viewport so the full 0–99 m climb can be inspected by swiping upward.
@@ -60,24 +60,7 @@ const ROBOT_CLIMB_HEIGHT = 86;
 const ROBOT_PLUCK_HEIGHT = 99;
 const PLUCK_GRAB_PROGRESS = 0.58;
 const PHYSICS_MASS_PER_KG = 0.045;
-// Auxiliary fixing materials keep their real-world relative mass, while only
-// ten percent of that mass is applied to the tower simulation.
-const FIXING_WEIGHT_RATIO = 0.1;
 const STRENGTH_MULTIPLIER = 3;
-// A newly installed link must settle onto its anchors before it is allowed to
-// accumulate fatigue. Ground braces in particular used to fall during the
-// near-zero-stiffness frame and then appear to detach or disappear.
-const FIXING_INSTALL_RAMP_MS = 720;
-const FIXING_INSTALL_GRACE_MS = 1100;
-const GROUND_FIXING_INSTALL_RAMP_MS = 1000;
-const GROUND_FIXING_INSTALL_GRACE_MS = 2200;
-// Matter constraints become numerically aggressive near stiffness=1. Keep the
-// material strength model intact, but cap the solver coefficient and add
-// damping so a fixing stabilises the tower instead of injecting energy into it.
-const FIXING_BRACE_SOLVER_MAX_STIFFNESS = 0.32;
-const FIXING_TIE_SOLVER_MAX_STIFFNESS = 0.2;
-const FIXING_BRACE_SOLVER_MIN_DAMPING = 0.18;
-const FIXING_TIE_SOLVER_MIN_DAMPING = 0.12;
 // Keep the robot's authored real-world profile, but soften the effective
 // moving payload by 50% so the climb remains readable without making every
 // otherwise sound tower fail under a single gait cycle.
@@ -278,10 +261,6 @@ interface FixingDraft {
   cancelPending?: boolean;
 }
 
-interface FixingBody extends Matter.Body {
-  gameFixingId?: FixingMaterialId;
-}
-
 interface FixingLink {
   id: number;
   materialId: FixingMaterialId;
@@ -289,8 +268,6 @@ interface FixingLink {
   anchorA: FixAnchor;
   anchorB: FixAnchor;
   restLength: number;
-  constraints: Matter.Constraint[];
-  braceBody?: FixingBody;
   damage: number;
   loadRatio: number;
   broken: boolean;
@@ -307,6 +284,9 @@ interface AdjustedBody {
 interface TaggedBody extends Matter.Body {
   gameItem?: ItemDefinition;
   gameBornAt?: number;
+  // Interaction lock only: the body remains fully dynamic in Matter, but once
+  // released it can never be selected or repositioned by the player again.
+  gamePlacementLocked?: boolean;
   gameBaseInertia?: number;
   gameStressRatio?: number;
   gameStressDamage?: number;
@@ -1030,6 +1010,7 @@ class TowerPhysicsGame {
   private collapseSettleElapsed = 0;
   private groundContacts = new Map<number, number>();
   private itemContacts = new Map<string, number>();
+  private unsupportedElapsed = new Map<number, number>();
   private structuralLoadKg = new Map<number, number>();
   private hintIndex = 0;
   private hintsLeft = 3;
@@ -1144,6 +1125,7 @@ class TowerPhysicsGame {
     window.removeEventListener("keydown", this.onKeyDown);
     Composite.clear(this.engine.world, false, true);
     Engine.clear(this.engine);
+    this.unsupportedElapsed.clear();
   }
 
   startHolding(itemId: ItemId, clientX: number, clientY: number, pointerId: number) {
@@ -1226,39 +1208,11 @@ class TowerPhysicsGame {
       this.held.pointerId = pointerId;
       return;
     }
-    const body = [...this.dynamicBodies].reverse().find((candidate) =>
-      !this.isFallen(candidate)
-      && point.x >= candidate.bounds.min.x
-      && point.x <= candidate.bounds.max.x
-      && point.y >= candidate.bounds.min.y
-      && point.y <= candidate.bounds.max.y,
-    );
-    if (!body) {
-      this.panning = { pointerId, lastClientY: clientY };
-      return;
-    }
-    const isFixed = this.fixingLinks.some((link) => !link.broken
-      && (link.anchorA.body.id === body.id || link.anchorB.body.id === body.id));
-    if (isFixed) {
-      this.message = `「${body.gameItem?.name ?? "物件"}」仍与固定材料相连，不能直接挪动。可继续增加连接，或重置后重新布局。`;
-      this.emit(true);
-      return;
-    }
-    this.adjusting = {
-      body,
-      pointerId,
-      offsetX: point.x - body.position.x,
-      offsetY: point.y - body.position.y,
-    };
-    // A deliberate reposition starts a new structure; it must never be mistaken for a collapse.
-    this.stableHeight = 0;
-    this.stableElapsed = 0;
-    this.collapseElapsed = 0;
-    Body.setStatic(body, true);
-    Body.setVelocity(body, { x: 0, y: 0 });
-    Body.setAngularVelocity(body, 0);
-    this.message = `正在调整「${body.gameItem?.name ?? "物件"}」，松手后重新结算稳定性。`;
-    this.emit(true);
+    // Once a building material has been released into the world it becomes a
+    // permanent part of the tower. Canvas dragging is reserved for camera
+    // panning and fixing-anchor interaction; placed bodies are never turned
+    // static or pulled out from underneath the stack.
+    this.panning = { pointerId, lastClientY: clientY };
   }
 
   rotateHeld(direction: -1 | 1) {
@@ -1322,6 +1276,7 @@ class TowerPhysicsGame {
     this.nextFixingId = 1;
     this.groundContacts.clear();
     this.itemContacts.clear();
+    this.unsupportedElapsed.clear();
     this.structuralLoadKg.clear();
     this.held = null;
     this.adjusting = null;
@@ -1357,7 +1312,13 @@ class TowerPhysicsGame {
 
   private createEngine() {
     const engine = Engine.create({
-      enableSleeping: true,
+      // A tower contains only a few dozen bodies, so the small optimisation
+      // gained from sleeping is not worth the gameplay bug it creates. Matter
+      // does not always wake an upper sleeping body when a support is moved by
+      // direct manipulation or a constraint; the result is a visibly floating
+      // prop. Keep every construction body in the solver so gravity reacts on
+      // the very next step after support is lost.
+      enableSleeping: false,
       positionIterations: 16,
       velocityIterations: 14,
       constraintIterations: 4,
@@ -1367,9 +1328,9 @@ class TowerPhysicsGame {
       event.pairs.forEach((pair) => {
         this.trackGroundContact(pair.bodyA, pair.bodyB, 1);
         this.trackItemContact(pair.bodyA, pair.bodyB, 1);
-        const bodyA = pair.bodyA as TaggedBody & FixingBody;
-        const bodyB = pair.bodyB as TaggedBody & FixingBody;
-        if (!bodyA.gameItem && !bodyB.gameItem && !bodyA.gameFixingId && !bodyB.gameFixingId) return;
+        const bodyA = pair.bodyA as TaggedBody;
+        const bodyB = pair.bodyB as TaggedBody;
+        if (!bodyA.gameItem && !bodyB.gameItem) return;
         const relativeX = pair.bodyA.velocity.x - pair.bodyB.velocity.x;
         const relativeY = pair.bodyA.velocity.y - pair.bodyB.velocity.y;
         this.audio.impact(Math.hypot(relativeX, relativeY) / 5.5);
@@ -1379,9 +1340,151 @@ class TowerPhysicsGame {
       event.pairs.forEach((pair) => {
         this.trackGroundContact(pair.bodyA, pair.bodyB, -1);
         this.trackItemContact(pair.bodyA, pair.bodyB, -1);
+        const itemA = (pair.bodyA as TaggedBody).gameItem;
+        const itemB = (pair.bodyB as TaggedBody).gameItem;
+        const groundLabels = new Set(["open-ground", "recovery-floor"]);
+        const itemLostGround = Boolean(
+          (itemA && groundLabels.has(pair.bodyB.label))
+          || (itemB && groundLabels.has(pair.bodyA.label)),
+        );
+        if ((itemA && itemB) || itemLostGround) this.wakeTowerAfterSupportLoss();
       });
     });
     return engine;
+  }
+
+  private wakeTowerAfterSupportLoss() {
+    // A support disappearing must invalidate the solver's previous contact
+    // solution. Merely waking bodies is insufficient: Matter can retain a
+    // position impulse from the old contact and visually suspend a gently
+    // released upper island until another body strikes it.
+    this.dynamicBodies.forEach((body) => {
+      if (body.isStatic) Body.setStatic(body, false);
+      Matter.Sleeping.set(body, false);
+      this.clearBodySolverMemory(body);
+    });
+  }
+
+  private clearBodySolverMemory(body: TaggedBody) {
+    type SolverBody = TaggedBody & {
+      positionImpulse?: { x: number; y: number };
+      constraintImpulse?: { x: number; y: number; angle: number };
+      totalContacts?: number;
+      sleepCounter?: number;
+    };
+    const solverBody = body as SolverBody;
+    if (solverBody.positionImpulse) {
+      solverBody.positionImpulse.x = 0;
+      solverBody.positionImpulse.y = 0;
+    }
+    if (solverBody.constraintImpulse) {
+      solverBody.constraintImpulse.x = 0;
+      solverBody.constraintImpulse.y = 0;
+      solverBody.constraintImpulse.angle = 0;
+    }
+    solverBody.totalContacts = 0;
+    solverBody.sleepCounter = 0;
+  }
+
+  private keepConstructionBodiesDynamic() {
+    // Placed building materials are never intentionally static. Reassert the
+    // dynamic/awake state while physics is running so an interrupted legacy
+    // drag or an engine hot reload cannot leave an unsupported item frozen in
+    // mid-air. This does not add force or velocity, so a supported stack stays
+    // visually calm while gravity remains able to act immediately.
+    this.dynamicBodies.forEach((body) => {
+      if (body.isStatic) Body.setStatic(body, false);
+      if (body.isSleeping) Matter.Sleeping.set(body, false);
+    });
+  }
+
+  private activePhysicalSupportSet() {
+    const candidates = this.dynamicBodies.filter((body) => !this.isFallen(body));
+    const supported = new Set<TaggedBody>();
+
+    // A root must be touching the real Matter ground. The tiny geometry
+    // tolerance only covers the single frame before collisionStart is emitted;
+    // it is deliberately much tighter than the visual support fallback used by
+    // tower height calculations, so a hovering body is never treated as held.
+    candidates.forEach((body) => {
+      const hasGroundContact = (this.groundContacts.get(body.id) ?? 0) > 0;
+      const bottom = body.bounds.max.y;
+      const isAtGroundSurface = bottom >= BASE_Y - 0.75 && bottom <= BASE_Y + 2.5;
+      if (hasGroundContact || isAtGroundSurface) supported.add(body);
+    });
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+
+      // Only a live Matter contact can pass support upward. A stale pair from
+      // the previous solver step is rejected by the current bounds/gap test.
+      for (const body of candidates) {
+        if (supported.has(body)) continue;
+        for (const support of supported) {
+          const hasContact = (this.itemContacts.get(this.itemContactKey(body, support)) ?? 0) > 0;
+          const overlap = Math.min(body.bounds.max.x, support.bounds.max.x)
+            - Math.max(body.bounds.min.x, support.bounds.min.x);
+          const verticalGap = support.bounds.min.y - body.bounds.max.y;
+          const isAboveSupport = body.position.y < support.position.y - 1;
+          if (hasContact && overlap >= 1 && isAboveSupport && verticalGap >= -12 && verticalGap <= 5) {
+            supported.add(body);
+            changed = true;
+            break;
+          }
+        }
+      }
+
+    }
+
+    return supported;
+  }
+
+  private resolveUnsupportedBodies(delta: number) {
+    const supported = this.activePhysicalSupportSet();
+    const liveIds = new Set<number>();
+    const newlyUnsupported: TaggedBody[] = [];
+
+    this.dynamicBodies.forEach((body) => {
+      liveIds.add(body.id);
+      if (this.isFallen(body) || supported.has(body)) {
+        this.unsupportedElapsed.delete(body.id);
+        return;
+      }
+
+      const wasUnsupported = this.unsupportedElapsed.has(body.id);
+      const elapsed = (this.unsupportedElapsed.get(body.id) ?? 0) + delta;
+      this.unsupportedElapsed.set(body.id, elapsed);
+      if (!wasUnsupported) newlyUnsupported.push(body);
+      if (body.isStatic) Body.setStatic(body, false);
+      Matter.Sleeping.set(body, false);
+      this.clearBodySolverMemory(body);
+
+      // A detached island must visibly start falling on the next simulation
+      // step. The small seed velocity only clears the stale zero-velocity
+      // manifold; gravity and the body's real mass control all later motion.
+      if (elapsed >= 16 && body.velocity.y < 0.28) {
+        Body.setVelocity(body, { x: body.velocity.x, y: 0.28 });
+      }
+    });
+
+    if (newlyUnsupported.length) {
+      // Drop every stale pair together so the upper island cannot keep an old
+      // support manifold alive. Contacts are rebuilt naturally on the next
+      // Engine.update and real collisions continue to work normally.
+      Matter.Pairs.clear(this.engine.pairs);
+      this.groundContacts.clear();
+      this.itemContacts.clear();
+      newlyUnsupported.forEach((body) => {
+        this.clearBodySolverMemory(body);
+        Body.translate(body, { x: 0, y: 0.18 });
+      });
+    }
+
+    for (const bodyId of this.unsupportedElapsed.keys()) {
+      if (!liveIds.has(bodyId)) this.unsupportedElapsed.delete(bodyId);
+    }
+    return supported;
   }
 
   private trackGroundContact(bodyA: Matter.Body, bodyB: Matter.Body, delta: 1 | -1) {
@@ -1461,6 +1564,10 @@ class TowerPhysicsGame {
       return;
     }
     if (!adjusted) return;
+    if (adjusted.body.gamePlacementLocked) {
+      this.releaseAdjustedBody();
+      return;
+    }
     const item = adjusted.body.gameItem;
     const halfWidth = (item?.width ?? 40) / 2;
     const halfHeight = (item?.height ?? 40) / 2;
@@ -1865,64 +1972,24 @@ class TowerPhysicsGame {
       return;
     }
 
-    const constraints: Matter.Constraint[] = [];
-    let braceBody: FixingBody | undefined;
-    const restLength = distance;
-    if (definition.mode === "brace") {
-      // A rigid fixing is one axial member between the two authored anchors.
-      // The former implementation inserted a third, gravity-driven body and
-      // joined it at both ends. On a static ground anchor that middle body
-      // could drift during the stiffness ramp, then snap back, overload and
-      // appear to detach. A direct distance constraint provides the intended
-      // tension/compression support without an artificial installation body.
-      constraints.push(Constraint.create({
-        bodyA: anchorA.body,
-        pointA: anchorA.local,
-        bodyB: anchorB.body,
-        pointB: anchorB.local,
-        length: restLength,
-        // Start fully neutral. updateFixingLinks captures the settled span and
-        // ramps this up after the installation grace period. A non-zero brace
-        // coefficient here lets Matter solve one frame before that grace logic
-        // runs, which is enough to kick a tall tower sideways.
-        stiffness: 0.00001,
-        damping: 0,
-        label: `fixing:${materialId}`,
-      }));
-      World.add(this.engine.world, constraints[0]);
-    } else {
-      // Install flexible fixings at their exact current span. Deliberately
-      // shortening a high-stiffness constraint here used to create a large
-      // one-frame yank as soon as the second anchor was released.
-      constraints.push(Constraint.create({
-        bodyA: anchorA.body,
-        pointA: anchorA.local,
-        bodyB: anchorB.body,
-        pointB: anchorB.local,
-        length: restLength,
-        stiffness: 0.00001,
-        damping: 0,
-        label: `fixing:${materialId}`,
-      }));
-      World.add(this.engine.world, constraints[0]);
-    }
-
     this.fixingLinks.push({
       id: this.nextFixingId++,
       materialId,
       installedAt: this.elapsed,
       anchorA,
       anchorB,
-      restLength,
-      constraints,
-      braceBody,
+      // Store only the installed geometry. Auxiliary materials are passive
+      // reinforcement records and never become Matter bodies or constraints.
+      // Consequently installation cannot inject an impulse, pull two bodies
+      // together, add damping, or suspend an otherwise unsupported object.
+      restLength: distance,
       damage: 0,
       loadRatio: 0,
       broken: false,
     });
     this.fixingInventory[materialId] -= 1;
     this.fixingDraft = null;
-    this.message = `「${definition.name}」已自动连接到两处合理受力点，强度与载荷将持续由物理引擎结算。`;
+    this.message = `「${definition.name}」已完成被动加固：只提高连接处的结构强度，不产生弹力、张力或主动拉扯。`;
     this.audio.place(definition.mode === "tie" ? ITEMS.pallet : ITEMS.beam);
     this.emit(true);
   }
@@ -1931,57 +1998,34 @@ class TowerPhysicsGame {
     for (const link of this.fixingLinks) {
       if (link.broken) continue;
       const definition = FIXING_MATERIALS[link.materialId];
-      const pointA = this.anchorWorld(link.anchorA);
-      const pointB = this.anchorWorld(link.anchorB);
-      const deltaX = pointB.x - pointA.x;
-      const deltaY = pointB.y - pointA.y;
-      const length = Math.max(1, Math.hypot(deltaX, deltaY));
-      const hasGroundAnchor = link.anchorA.ground || link.anchorB.ground;
-      const installAge = this.elapsed - link.installedAt;
-      const installRampMs = hasGroundAnchor ? GROUND_FIXING_INSTALL_RAMP_MS : FIXING_INSTALL_RAMP_MS;
-      const installGraceMs = hasGroundAnchor ? GROUND_FIXING_INSTALL_GRACE_MS : FIXING_INSTALL_GRACE_MS;
+      const worldA = this.anchorWorld(link.anchorA);
+      const worldB = this.anchorWorld(link.anchorB);
+      const currentLength = Math.hypot(worldB.x - worldA.x, worldB.y - worldA.y);
+      const extension = currentLength - link.restLength;
 
-      // During the settle window the link follows both anchors without any
-      // preload. This is important for ground links: fixing one endpoint to an
-      // immovable body while the tower is still settling otherwise creates a
-      // one-frame catapult force. Capture the final settled length, then begin
-      // the stiffness ramp from zero.
-      if (installAge < installGraceMs) {
-        link.restLength = length;
-        link.constraints.forEach((constraint) => {
-          constraint.length = length;
-          constraint.stiffness = 0.00001;
-          constraint.damping = 0;
-        });
-        link.loadRatio = 0;
-        link.damage = Math.max(0, link.damage - delta * 0.00012);
+      // A passive fixing material is not a spring. It is allowed only a tiny
+      // amount of geometric tolerance for normal solver jitter; once the two
+      // anchors separate farther than its rated strain permits it snaps rather
+      // than stretching, deforming or exerting a corrective force. Keep the
+      // visible tolerance deliberately small even for elastic rope/tape so the
+      // material never reads as an infinitely extensible rubber band.
+      const ratedExtension = link.restLength * Math.min(definition.maxStrain, 0.065);
+      const extensionLimit = clamp(ratedExtension, 3, 9);
+      const compressionLimit = clamp(
+        link.restLength * Math.min(definition.maxStrain, 0.045),
+        3,
+        7,
+      );
+      const deformedBeyondStrength = extension > extensionLimit
+        || (definition.mode === "brace" && -extension > compressionLimit);
+      if (deformedBeyondStrength) {
+        link.damage = 1;
+        link.loadRatio = Math.max(link.loadRatio, 1);
+        link.broken = true;
+        link.brokenAt = this.elapsed;
+        this.message = `${definition.failureLabel}。固定材料已自动解除，不会继续拉扯塔体。`;
+        this.audio.strain(2.4);
         continue;
-      }
-
-      const unitX = deltaX / length;
-      const unitY = deltaY / length;
-      const signedStrain = (length - link.restLength) / Math.max(1, link.restLength);
-      const velocityA = link.anchorA.body.isStatic ? { x: 0, y: 0 } : link.anchorA.body.velocity;
-      const velocityB = link.anchorB.body.isStatic ? { x: 0, y: 0 } : link.anchorB.body.velocity;
-      const relativeX = velocityB.x - velocityA.x;
-      const relativeY = velocityB.y - velocityA.y;
-      const axialSpeed = Math.abs(relativeX * unitX + relativeY * unitY);
-      const shearSpeed = Math.abs(relativeX * -unitY + relativeY * unitX);
-      const installBlend = smoothStep(clamp((installAge - installGraceMs) / installRampMs, 0, 1));
-
-      const tieTaut = definition.mode === "tie" && length > link.restLength * 1.001;
-      if (definition.mode === "tie") {
-        const targetStiffness = Math.min(definition.stiffness, FIXING_TIE_SOLVER_MAX_STIFFNESS);
-        const targetDamping = Math.max(definition.damping, FIXING_TIE_SOLVER_MIN_DAMPING);
-        link.constraints[0].stiffness = tieTaut ? Math.max(0.00001, targetStiffness * installBlend) : 0.00001;
-        link.constraints[0].damping = tieTaut ? targetDamping * installBlend : 0;
-      } else {
-        const targetStiffness = Math.min(definition.stiffness, FIXING_BRACE_SOLVER_MAX_STIFFNESS);
-        const targetDamping = Math.max(definition.damping, FIXING_BRACE_SOLVER_MIN_DAMPING);
-        link.constraints.forEach((constraint) => {
-          constraint.stiffness = Math.max(0.00001, targetStiffness * installBlend);
-          constraint.damping = targetDamping * installBlend;
-        });
       }
 
       const loadA = link.anchorA.ground
@@ -1990,62 +2034,26 @@ class TowerPhysicsGame {
       const loadB = link.anchorB.ground
         ? 0
         : this.structuralLoadKg.get(link.anchorB.body.id) ?? link.anchorB.body.mass / PHYSICS_MASS_PER_KG;
-      const transmittedKg = link.anchorA.ground ? loadB : link.anchorB.ground ? loadA : Math.min(loadA, loadB);
-      // A shallow member needs *more* axial force to carry the same vertical
-      // load (T = W / sin(theta)), not less. Cap the projection near zero so a
-      // horizontal improvised brace fails rapidly without producing infinity.
-      const verticalProjection = Math.max(0.18, Math.abs(unitY));
-      const carriedAxialN = transmittedKg * 9.81 / verticalProjection;
-      const carriedShearN = transmittedKg * 9.81 * Math.sqrt(Math.max(0, 1 - unitY * unitY)) * 0.34;
-      const tensionN = Math.max(0, signedStrain) / Math.max(0.001, definition.maxStrain) * definition.tensileN
-        + (tieTaut || definition.mode === "brace" ? carriedAxialN : 0);
-      const compressionN = definition.mode === "brace"
-        ? Math.max(0, -signedStrain) / Math.max(0.001, definition.maxStrain) * definition.compressiveN
-          + carriedAxialN
-        : 0;
-      const effectiveMassKg = definition.massKg * FIXING_WEIGHT_RATIO;
-      const dynamicN = axialSpeed * effectiveMassKg * 46;
-      const shearN = shearSpeed * effectiveMassKg * 38 + carriedShearN;
-      const tensionRatio = (tensionN + dynamicN) / Math.max(1, definition.tensileN * STRENGTH_MULTIPLIER);
-      const compressionRatio = compressionN / Math.max(1, definition.compressiveN * STRENGTH_MULTIPLIER);
-      const shearRatio = shearN / Math.max(1, definition.shearN * STRENGTH_MULTIPLIER);
-      const ratio = Math.max(tensionRatio, compressionRatio, shearRatio);
-      link.loadRatio = ratio;
-      if (ratio > 1) {
-        const groundDamageScale = hasGroundAnchor ? 0.55 : 1;
-        link.damage += delta * (0.00042 + (ratio - 1) * 0.00072) * groundDamageScale;
-        this.audio.strain(ratio);
+      const transmittedKg = link.anchorA.ground ? loadB : link.anchorB.ground ? loadA : Math.max(loadA, loadB);
+      const capacityN = Math.max(definition.tensileN, definition.compressiveN, definition.shearN)
+        * STRENGTH_MULTIPLIER;
+      const loadRatio = transmittedKg * 9.81 / Math.max(1, capacityN);
+      link.loadRatio = loadRatio;
+      if (loadRatio > 1) {
+        // Slight overload has a brief readable failure window; heavy overload
+        // breaks almost immediately. No force is applied during this interval.
+        const overload = Math.max(0.01, loadRatio - 1);
+        const breakDuration = clamp(620 / (1 + overload * 2.4), 100, 620);
+        link.damage += delta / breakDuration;
+        this.audio.strain(loadRatio);
       } else {
-        link.damage = Math.max(0, link.damage - delta * 0.000035);
+        link.damage = Math.max(0, link.damage - delta / 1800);
       }
       if (link.damage < 1) continue;
       link.broken = true;
       link.brokenAt = this.elapsed;
-      link.constraints.forEach((constraint) => World.remove(this.engine.world, constraint));
-      if (link.braceBody) link.braceBody.isSensor = false;
-      if (!link.anchorA.body.isStatic) Matter.Sleeping.set(link.anchorA.body, false);
-      if (!link.anchorB.body.isStatic) Matter.Sleeping.set(link.anchorB.body, false);
-      this.message = `${definition.failureLabel}。结构仍会继续结算；若塔体保持稳定，任务可以继续。`;
+      this.message = `${definition.failureLabel}。固定材料已自动解除，不会继续拉扯塔体；若塔身仍稳定，任务可以继续。`;
       this.audio.strain(2.4);
-    }
-  }
-
-  private applyFixingMaterialWeight() {
-    const gravityScale = this.engine.gravity.scale || 0.001;
-    for (const link of this.fixingLinks) {
-      if (link.broken) continue;
-      const definition = FIXING_MATERIALS[link.materialId];
-      // Constraints have no mass of their own. Apply ten percent of each
-      // material's real weight to its dynamic endpoints, including rigid
-      // braces, so the configured mass is physical without introducing a
-      // third body that can fall away from the ground joint.
-      const halfMatterMass = definition.massKg * FIXING_WEIGHT_RATIO * PHYSICS_MASS_PER_KG / 2;
-      const force = {
-        x: halfMatterMass * this.engine.gravity.x * gravityScale,
-        y: halfMatterMass * this.engine.gravity.y * gravityScale,
-      };
-      if (!link.anchorA.body.isStatic) Body.applyForce(link.anchorA.body, this.anchorWorld(link.anchorA), force);
-      if (!link.anchorB.body.isStatic) Body.applyForce(link.anchorB.body, this.anchorWorld(link.anchorB), force);
     }
   }
 
@@ -2054,8 +2062,9 @@ class TowerPhysicsGame {
     if (!adjusted) return false;
     Body.setStatic(adjusted.body, false);
     Matter.Sleeping.set(adjusted.body, false);
-    Body.setVelocity(adjusted.body, { x: 0, y: 0 });
-    Body.setAngularVelocity(adjusted.body, 0);
+    adjusted.body.gamePlacementLocked = true;
+    this.clearBodySolverMemory(adjusted.body);
+    this.wakeTowerAfterSupportLoss();
     if (adjusted.body.gameItem) this.audio.place(adjusted.body.gameItem);
     this.adjusting = null;
     return true;
@@ -2078,6 +2087,12 @@ class TowerPhysicsGame {
     }
     const body = this.makeBody(item, dropX, dropY, this.held.angle);
     this.dynamicBodies.push(body);
+    // Releasing a material commits it permanently. The released body and every
+    // earlier part of the tower can no longer be selected or repositioned;
+    // players may only introduce another material from the inventory.
+    this.dynamicBodies.forEach((placedBody) => {
+      placedBody.gamePlacementLocked = true;
+    });
     World.add(this.engine.world, body);
     this.audio.place(item);
     this.inventory[item.id] -= 1;
@@ -2116,6 +2131,7 @@ class TowerPhysicsGame {
     Body.setInertia(body, body.inertia * physics.stability);
     body.gameItem = item;
     body.gameBornAt = this.elapsed;
+    body.gamePlacementLocked = true;
     body.gameBaseInertia = body.inertia;
     body.gameStressRatio = 0;
     body.gameStressDamage = 0;
@@ -2131,13 +2147,19 @@ class TowerPhysicsGame {
     // actually reached the tower top and we know whether the flower is within
     // arm's reach.
     this.resolveRobotAtTowerTop();
-    if (this.status === "building" || this.status === "activating" || this.status === "collapsing") {
+    // Once a collapse result is shown, keep simulating its debris as well. The
+    // modal must never turn an unsupported upper object into a frozen prop.
+    // Flower-reach failure deliberately has no pending collapse reason and
+    // therefore remains frozen for its authored result pose.
+    const simulatingFinishedCollapse = this.status === "failed" && Boolean(this.pendingFailureReason);
+    if (this.status === "building" || this.status === "activating" || this.status === "collapsing" || simulatingFinishedCollapse) {
       this.accumulator += delta;
       while (this.accumulator >= 16.667) {
+        this.keepConstructionBodiesDynamic();
         if (this.status === "activating") this.applyRobotWeight();
-        this.applyFixingMaterialWeight();
         Engine.update(this.engine, 16.667);
-        this.updateFixingLinks(16.667);
+        if (this.status !== "failed") this.updateFixingLinks(16.667);
+        this.resolveUnsupportedBodies(16.667);
         this.accumulator -= 16.667;
       }
     } else {
@@ -2289,6 +2311,24 @@ class TowerPhysicsGame {
     return { bodies: [...depth.keys()], depth };
   }
 
+  private passiveFixingStrengthMultiplier(body: TaggedBody) {
+    let bonus = 0;
+    for (const link of this.fixingLinks) {
+      if (link.broken) continue;
+      const reinforcesA = !link.anchorA.ground && link.anchorA.body.id === body.id;
+      const reinforcesB = !link.anchorB.ground && link.anchorB.body.id === body.id;
+      if (!reinforcesA && !reinforcesB) continue;
+      const definition = FIXING_MATERIALS[link.materialId];
+      const ratedStrength = Math.max(definition.tensileN, definition.compressiveN, definition.shearN);
+      const normalizedStrength = clamp(ratedStrength / 42_000, 0.05, 1);
+      bonus += normalizedStrength * (definition.mode === "brace" ? 0.42 : 0.28);
+    }
+    // Multiple reinforcements stack with diminishing practical benefit. This
+    // changes only the game's failure threshold; it never applies a force,
+    // velocity, torque, constraint or artificial support to the Matter bodies.
+    return clamp(1 + bonus, 1, 2.5);
+  }
+
   private updateStructuralStress(
     graph: { bodies: TaggedBody[]; depth: Map<TaggedBody, number> },
     delta: number,
@@ -2352,7 +2392,9 @@ class TowerPhysicsGame {
       const item = body.gameItem;
       if (!item) return;
       const physics = ITEM_PHYSICS[item.id];
-      const strengthenedCapacityKg = physics.safeLoadKg * STRENGTH_MULTIPLIER;
+      const strengthenedCapacityKg = physics.safeLoadKg
+        * STRENGTH_MULTIPLIER
+        * this.passiveFixingStrengthMultiplier(body);
       const loadKg = loadAboveKg.get(body) ?? 0;
       const stressRatio = loadKg / Math.max(1, strengthenedCapacityKg);
       const overload = Math.max(0, stressRatio - 1);
@@ -2561,20 +2603,21 @@ class TowerPhysicsGame {
 
   private updateCollapseSettlement(delta: number) {
     this.height = this.measureHeight();
-    const braceBodies = this.fixingLinks
-      .map((link) => link.braceBody)
-      .filter((body): body is FixingBody => Boolean(body));
-    const movingBodies: Matter.Body[] = [...this.dynamicBodies, ...braceBodies];
+    const movingBodies: Matter.Body[] = [...this.dynamicBodies];
+    const physicallySupported = this.activePhysicalSupportSet();
+    const hasUnsupportedBody = this.dynamicBodies.some((body) => (
+      !this.isFallen(body) && !physicallySupported.has(body)
+    ));
     const quiet = movingBodies.every((body) => body.isSleeping
       || (body.speed < 0.2 && Math.abs(body.angularVelocity) < 0.02));
     const hasGroundedRemains = this.dynamicBodies.some((body) => (
       (this.groundContacts.get(body.id) ?? 0) > 0 || body.position.y >= BASE_Y - 4 || this.isFallen(body)
     ));
-    if (quiet && hasGroundedRemains) this.collapseSettleElapsed += delta;
+    if (quiet && hasGroundedRemains && !hasUnsupportedBody) this.collapseSettleElapsed += delta;
     else this.collapseSettleElapsed = 0;
 
     const elapsed = this.elapsed - this.collapseStartedAt;
-    const gentleTimeout = elapsed >= 7000 && movingBodies.every((body) => body.speed < 0.48
+    const gentleTimeout = elapsed >= 7000 && !hasUnsupportedBody && movingBodies.every((body) => body.speed < 0.48
       && Math.abs(body.angularVelocity) < 0.05);
     const absoluteTimeout = elapsed >= 10000;
     if (this.collapseSettleElapsed >= 1000 || gentleTimeout || absoluteTimeout) this.finalizeFailure();
@@ -3383,62 +3426,21 @@ class TowerPhysicsGame {
   private drawFixingLinks() {
     const ctx = this.context;
     this.fixingLinks.forEach((link) => {
+      // A failed fixing material is detached immediately. Keeping a broken
+      // full-length line on screen made it look as if it were still stretching
+      // and pulling the tower even though the simulation applied no force.
+      if (link.broken) return;
       const definition = FIXING_MATERIALS[link.materialId];
       const stressed = link.loadRatio > 0.72;
-      const color = link.broken ? "#b1593f" : stressed ? "#d29b54" : this.fixingColor(link.materialId);
+      const color = stressed ? "#d29b54" : this.fixingColor(link.materialId);
       const width = clamp(definition.width * PIXELS_PER_METER, 2.2, 13);
       ctx.save();
       ctx.lineCap = definition.mode === "brace" ? "butt" : "round";
       ctx.lineJoin = "round";
-      ctx.globalAlpha = link.broken && !link.braceBody
-        ? clamp(1 - (this.elapsed - (link.brokenAt ?? this.elapsed)) / 1300, 0, 1)
-        : 1;
+      ctx.globalAlpha = 1;
 
-      let a = this.anchorWorld(link.anchorA);
-      let b = this.anchorWorld(link.anchorB);
-
-      if (link.braceBody) {
-        const body = link.braceBody;
-        const drawLength = link.restLength;
-        if (link.broken) {
-          const direction = { x: Math.cos(body.angle), y: Math.sin(body.angle) };
-          a = { x: body.position.x - direction.x * drawLength / 2, y: body.position.y - direction.y * drawLength / 2 };
-          b = { x: body.position.x + direction.x * drawLength / 2, y: body.position.y + direction.y * drawLength / 2 };
-        }
-        if (this.straightFixingSource(link.materialId)) {
-          ctx.strokeStyle = "rgba(7, 12, 12, .82)";
-          ctx.lineWidth = width + 2.1;
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.stroke();
-          this.drawStraightFixingTexture(link.materialId, a, b, width, 1);
-          ctx.restore();
-          return;
-        }
-        ctx.translate(body.position.x, body.position.y);
-        ctx.rotate(body.angle);
-        ctx.fillStyle = "rgba(15, 22, 21, .86)";
-        roundedRect(ctx, -drawLength / 2 - 1.6, -width / 2 - 1.6, drawLength + 3.2, width + 3.2, Math.min(3, width / 2));
-        ctx.fill();
-        ctx.fillStyle = color;
-        roundedRect(ctx, -drawLength / 2, -width / 2, drawLength, width, Math.min(2.4, width / 2));
-        ctx.fill();
-        ctx.strokeStyle = "rgba(222, 197, 139, .26)";
-        ctx.lineWidth = Math.max(0.7, width * 0.09);
-        ctx.beginPath();
-        ctx.moveTo(-drawLength / 2 + 4, -width * 0.2);
-        ctx.lineTo(drawLength / 2 - 4, -width * 0.2);
-        ctx.stroke();
-        for (const side of [-1, 1]) {
-          ctx.fillStyle = "#202927";
-          ctx.beginPath();
-          ctx.arc(side * (drawLength / 2 - 2.8), 0, Math.min(2.2, width * 0.24), 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-        return;
-      }
+      const a = this.anchorWorld(link.anchorA);
+      const b = this.anchorWorld(link.anchorB);
 
       const distance = Math.hypot(b.x - a.x, b.y - a.y);
       const textured = this.straightFixingSource(link.materialId);
@@ -4506,7 +4508,7 @@ function GameStage({ level, onExit, audio }: GameStageProps) {
                           style={fixingThumbnailImageStyle(id)}
                         />
                       </span>
-                      <span className="material-copy"><b>{material.name}</b><small>{material.mode === "tie" ? "柔性拉结" : "刚性支撑"}</small></span>
+                      <span className="material-copy"><b>{material.name}</b><small>{material.mode === "tie" ? "柔性加固" : "刚性加固"}</small></span>
                       <span className="material-count">×{count}</span>
                     </button>
                   );
