@@ -1419,6 +1419,8 @@ body {
   gap: 9px;
   padding: 0;
   overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1494,7 +1496,13 @@ body {
   gap: 4px;
   padding: 4px 0 0;
   overflow: hidden;
+  overscroll-behavior: none;
+  scrollbar-width: none;
   touch-action: none;
+}
+
+.minimal-game .inventory-section-list.inventory-list::-webkit-scrollbar {
+  display: none;
 }
 
 .minimal-game .inventory-section-list .material-card {

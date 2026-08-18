@@ -61,6 +61,13 @@ const ROBOT_PLUCK_HEIGHT = 99;
 const PLUCK_GRAB_PROGRESS = 0.58;
 const PHYSICS_MASS_PER_KG = 0.045;
 const STRENGTH_MULTIPLIER = 3;
+// Broken fixings remain visible briefly as two detached pieces with a small
+// burst at the fracture point. This makes a structural failure readable
+// instead of making the material appear to vanish instantly.
+// Keep a broken fixing material on screen long enough for the player to read
+// what happened.  The previous 1.25s effect was commonly hidden by the impact
+// and camera response, which made a real break look like an unexplained vanish.
+const FIXING_BREAK_EFFECT_DURATION = 2400;
 // Keep the robot's authored real-world profile, but soften the effective
 // moving payload by 50% so the climb remains readable without making every
 // otherwise sound tower fail under a single gait cycle.
@@ -1816,8 +1823,9 @@ class TowerPhysicsGame {
   }
 
   private findNearestFixAnchor(point: Matter.Vector, excludedBodyId?: number): FixAnchor | null {
-    if (this.pointInsideBasketForbiddenArea(point)) return null;
-    const snapRadius = 72;
+    // A generous world-space radius keeps thin, rotated and large props easy
+    // to acquire on a phone. Exact hits still win because they sort at -1.
+    const snapRadius = 96;
     const groundSnapRadius = 76;
     const dropBounds = this.dropZoneWorldBounds();
     const canUseGround = this.baseBody
@@ -1837,7 +1845,10 @@ class TowerPhysicsGame {
 
     const candidates = [...this.dynamicBodies]
       .reverse()
-      .filter((body) => !this.isFallen(body) && body.id !== excludedBodyId)
+      // Every placed construction body is a valid fixing surface. Previously
+      // bodies classified as "fallen" were filtered here, which also rejected
+      // useful tilted beams, cars and other irregular props.
+      .filter((body) => body.id !== excludedBodyId)
       .map((body) => ({
         anchor: this.anchorPointOnBody(body, point),
         distance: Matter.Vertices.contains(body.vertices, point)
@@ -1895,9 +1906,11 @@ class TowerPhysicsGame {
     // The tower is 99 m tall while real discarded straps are authored at a
     // smaller visual scale. Any two distinct useful points are connectable;
     // material strength, stretch and breakage still decide whether it holds.
+    // The basket never becomes an anchor because it is not a Matter body; do
+    // not reject a real construction body merely because its artwork overlaps
+    // the basket's visual no-build volume near 99 m.
     return anchorA.body.id !== anchorB.body.id
-      && distance >= 4
-      && !this.segmentCrossesBasketForbiddenArea(worldA, worldB);
+      && distance >= 4;
   }
 
   private basketForbiddenBounds() {
@@ -3426,21 +3439,20 @@ class TowerPhysicsGame {
   private drawFixingLinks() {
     const ctx = this.context;
     this.fixingLinks.forEach((link) => {
-      // A failed fixing material is detached immediately. Keeping a broken
-      // full-length line on screen made it look as if it were still stretching
-      // and pulling the tower even though the simulation applied no force.
-      if (link.broken) return;
       const definition = FIXING_MATERIALS[link.materialId];
       const stressed = link.loadRatio > 0.72;
       const color = stressed ? "#d29b54" : this.fixingColor(link.materialId);
       const width = clamp(definition.width * PIXELS_PER_METER, 2.2, 13);
+      const a = this.anchorWorld(link.anchorA);
+      const b = this.anchorWorld(link.anchorB);
+      if (link.broken) {
+        this.drawBrokenFixingLink(link, a, b, width, color);
+        return;
+      }
       ctx.save();
       ctx.lineCap = definition.mode === "brace" ? "butt" : "round";
       ctx.lineJoin = "round";
       ctx.globalAlpha = 1;
-
-      const a = this.anchorWorld(link.anchorA);
-      const b = this.anchorWorld(link.anchorB);
 
       const distance = Math.hypot(b.x - a.x, b.y - a.y);
       const textured = this.straightFixingSource(link.materialId);
@@ -3494,6 +3506,112 @@ class TowerPhysicsGame {
       });
       ctx.restore();
     });
+  }
+
+  private drawBrokenFixingLink(
+    link: FixingLink,
+    a: Matter.Vector,
+    b: Matter.Vector,
+    width: number,
+    color: string,
+  ) {
+    const elapsed = Math.max(0, this.elapsed - (link.brokenAt ?? this.elapsed));
+    const progress = clamp(elapsed / FIXING_BREAK_EFFECT_DURATION, 0, 1);
+    if (progress >= 1) return;
+
+    const ctx = this.context;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1) return;
+    const ux = dx / length;
+    const uy = dy / length;
+    const perpendicularX = -uy;
+    const perpendicularY = ux;
+    const eased = 1 - (1 - progress) ** 3;
+    const fade = 1 - smoothStep((progress - 0.5) / 0.5);
+    const direction = link.id % 2 === 0 ? 1 : -1;
+    const gap = Math.min(length * 0.46, width * 1.5 + eased * 30);
+    const fall = eased * eased * 18;
+    const sideDrift = direction * eased * 4.5;
+    const midpoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const leftEnd = {
+      x: midpoint.x - ux * gap / 2 + perpendicularX * sideDrift,
+      y: midpoint.y - uy * gap / 2 + perpendicularY * sideDrift + fall,
+    };
+    const rightStart = {
+      x: midpoint.x + ux * gap / 2 - perpendicularX * sideDrift,
+      y: midpoint.y + uy * gap / 2 - perpendicularY * sideDrift + fall,
+    };
+
+    const drawDetachedSegment = (start: Matter.Vector, end: Matter.Vector) => {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, fade);
+      ctx.strokeStyle = "rgba(7, 12, 12, .86)";
+      ctx.lineCap = "round";
+      ctx.lineWidth = width + 2.1;
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+      const textured = this.drawStraightFixingTexture(link.materialId, start, end, width, fade);
+      if (!textured) {
+        if (link.materialId === "chain") ctx.setLineDash([5.5, 3.5]);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
+    };
+
+    drawDetachedSegment(a, leftEnd);
+    drawDetachedSegment(rightStart, b);
+
+    const burstProgress = clamp(progress / 0.68, 0, 1);
+    const burstFade = 1 - smoothStep(burstProgress);
+    const burstCenter = {
+      x: midpoint.x,
+      y: midpoint.y + fall * 0.45,
+    };
+    ctx.save();
+    ctx.globalAlpha = burstFade;
+    ctx.strokeStyle = "#f1bc68";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(burstCenter.x, burstCenter.y, 3 + burstProgress * 16, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let index = 0; index < 8; index += 1) {
+      const angle = link.id * 0.73 + index * Math.PI * 0.25;
+      const travel = 5 + burstProgress * (12 + (index % 3) * 5);
+      const particleX = burstCenter.x + Math.cos(angle) * travel;
+      const particleY = burstCenter.y + Math.sin(angle) * travel + burstProgress * burstProgress * 8;
+      ctx.strokeStyle = index % 2 === 0 ? "#f5d18c" : "#c9793d";
+      ctx.beginPath();
+      ctx.moveTo(
+        particleX - Math.cos(angle) * 3,
+        particleY - Math.sin(angle) * 3,
+      );
+      ctx.lineTo(particleX, particleY);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    if (progress < 0.72) {
+      ctx.save();
+      ctx.globalAlpha = 1 - smoothStep(progress / 0.72);
+      ctx.fillStyle = "#fff0c8";
+      ctx.font = "600 10px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.shadowColor = "rgba(28, 14, 8, .85)";
+      ctx.shadowBlur = 4;
+      ctx.fillText("断裂", burstCenter.x, burstCenter.y - 10 - progress * 9);
+      ctx.restore();
+    }
   }
 
   private drawFixingPreview() {
